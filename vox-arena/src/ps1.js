@@ -24,8 +24,11 @@ export class PS1 {
     const rw = Math.max(160, Math.round(this.w * this.scale));
     const rh = Math.max(90, Math.round(this.h * this.scale));
     if (this.rt) this.rt.dispose();
+    // ВАЖНО: HalfFloatType — иначе тёмные линейные значения освещения
+    // квантуются 8-битным буфером в ноль и point-light'ы «не работают».
     this.rt = new THREE.WebGLRenderTarget(rw, rh, {
       minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true,
+      type: THREE.HalfFloatType,
     });
     this.rt.texture.generateMipmaps = false;
   }

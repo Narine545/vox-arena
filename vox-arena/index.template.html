@@ -44,11 +44,17 @@
   #hp-num{font-size:26px;font-weight:900;color:#fff;text-shadow:0 0 6px rgba(255,40,20,.8),1px 1px 0 #000;min-width:52px;}
 
   #bottom-right{position:absolute;right:22px;bottom:18px;text-align:right;}
-  #weapon-name{font-size:11px;letter-spacing:2px;color:#c9b8a0;text-shadow:0 1px 0 #000;margin-bottom:2px;}
+  #weapon-slots{display:flex;justify-content:flex-end;gap:8px;margin-bottom:4px;}
+  .w-slot{font-size:11px;letter-spacing:1px;color:#887766;background:rgba(0,0,0,.6);border:1px solid #3d1b14;padding:2px 8px;border-radius:2px;}
+  .w-slot.active{color:#fff;background:rgba(180,24,18,.35);border-color:var(--red);box-shadow:0 0 8px rgba(255,36,24,.4);}
+  #weapon-name{font-size:12px;letter-spacing:2px;font-weight:700;color:#e8ddc8;text-shadow:0 1px 0 #000;margin-bottom:2px;}
   #ammo-row{display:flex;align-items:baseline;justify-content:flex-end;gap:6px;}
   #ammo-num{font-size:44px;font-weight:900;color:#fff;text-shadow:0 0 8px rgba(255,176,58,.55),2px 2px 0 #000;line-height:1;}
   #ammo-mag{font-size:18px;color:#c9b8a0;text-shadow:1px 1px 0 #000;}
   #reload-note{font-size:12px;letter-spacing:2px;color:var(--amber);height:14px;text-shadow:1px 1px 0 #000;}
+  #weapon-subinfo{font-size:11px;color:#a89985;margin-top:2px;letter-spacing:1px;}
+  #flashlight-status{color:#77ff88;}
+  #flashlight-status.off{color:#888;}
 
   #top-left{position:absolute;left:22px;top:18px;text-shadow:1px 1px 0 #000;}
   #wave-label{font-size:20px;font-weight:800;letter-spacing:2px;color:#fff;}
@@ -74,8 +80,42 @@
 
   #fps{position:absolute;right:8px;top:6px;font-size:11px;color:#7f7;padding:2px 6px;background:rgba(0,0,0,.4);}
 
+  /* Интерактивный прицельный промпт (Interaction Prompt) */
+  #interaction-prompt{position:absolute;left:50%;top:58%;transform:translateX(-50%);
+    background:rgba(12,16,22,0.92);border:1px solid #33aaff;color:#d8eeff;
+    padding:8px 18px;font-size:13px;font-weight:700;letter-spacing:2px;
+    border-radius:3px;box-shadow:0 0 18px rgba(51,170,255,0.5);text-shadow:0 1px 2px #000;
+    pointer-events:none;transition:opacity 0.15s;white-space:nowrap;z-index:7;}
+
+  /* Блок текущей сюжетной задачи (Mission Objective Tracker) */
+  #objective-box{position:absolute;left:22px;top:20px;display:flex;align-items:center;gap:10px;
+    background:rgba(10,14,20,0.85);border:1px solid #284460;border-left:4px solid var(--amber);
+    padding:8px 14px;border-radius:3px;box-shadow:0 0 14px rgba(0,0,0,0.7);z-index:6;}
+  #objective-dot{width:9px;height:9px;background:var(--amber);border-radius:50%;box-shadow:0 0 10px var(--amber);animation:pulseDot 1.4s infinite;}
+  #objective-text{font-size:12px;font-weight:700;letter-spacing:1.5px;color:#f0e4d0;text-shadow:0 1px 1px #000;}
+  @keyframes pulseDot{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.3;transform:scale(0.7);}}
+
+  /* ЭЛТ-Терминал данных (Retro Sci-Fi CRT Terminal Screen) */
+  #terminal-screen{position:fixed;inset:0;z-index:15;background:rgba(3,6,5,0.88);
+    display:flex;align-items:center;justify-content:center;pointer-events:auto;}
+  #terminal-box{width:min(700px,92vw);background:#07140b;border:2px solid #1f7a3f;
+    box-shadow:0 0 40px rgba(31,122,63,0.55),inset 0 0 40px rgba(0,0,0,0.8);
+    padding:26px 30px;color:#44ff88;font-family:Consolas,monospace;position:relative;border-radius:4px;}
+  #terminal-box::before{content:'';position:absolute;inset:0;
+    background:linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.35) 50%);
+    background-size:100% 4px;pointer-events:none;}
+  #terminal-title{font-size:16px;letter-spacing:3px;font-weight:900;color:#66ffaa;
+    border-bottom:1px solid #1f7a3f;padding-bottom:10px;margin-bottom:16px;}
+  #terminal-content{font-size:14px;line-height:1.8;white-space:pre-wrap;color:#b0ffcf;
+    max-height:55vh;overflow-y:auto;}
+  #terminal-footer{margin-top:20px;text-align:right;}
+
+  /* Панель песочницы / превью тварей */
+  #sandbox-panel{position:absolute;top:16px;left:50%;transform:translateX(-50%);background:rgba(14,8,10,0.92);border:1px solid #6b2015;padding:8px 12px;display:flex;gap:6px;align-items:center;pointer-events:auto;z-index:8;border-radius:3px;box-shadow:0 0 18px rgba(0,0,0,0.85);max-width:96vw;overflow-x:auto;}
+  .sb-btn{font-size:11px;padding:6px 10px;letter-spacing:1px;white-space:nowrap;}
+
   #damage-flash{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,rgba(255,0,0,0) 40%,rgba(255,10,5,.55) 100%);opacity:0;transition:opacity .35s;z-index:6;}
-  #vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 55%,rgba(0,0,0,.5) 100%);z-index:4;}
+  #vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 50%,rgba(0,0,0,.65) 100%);z-index:4;}
   #lowhp{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,rgba(255,0,0,0) 55%,rgba(255,0,0,.28) 100%);opacity:0;z-index:4;}
 
   /* ---------- Экраны ---------- */
@@ -85,18 +125,19 @@
     text-shadow:0 0 30px rgba(255,36,24,.75),4px 4px 0 var(--red-dark);}
   .title em{font-style:normal;color:var(--red);}
   .subtitle{margin-top:10px;font-size:13px;letter-spacing:6px;color:#c9b8a0;}
-  .menu-btns{margin-top:44px;display:flex;flex-direction:column;gap:12px;min-width:300px;}
+  .menu-btns{margin-top:22px;display:flex;flex-direction:column;gap:10px;min-width:350px;max-width:92vw;}
   .btn{pointer-events:auto;cursor:pointer;border:1px solid #6b2015;background:linear-gradient(180deg,#1c0d0b,#120709);
-    color:var(--bone);font-size:17px;font-weight:700;letter-spacing:4px;padding:13px 30px;text-align:center;
+    color:var(--bone);font-size:17px;font-weight:700;letter-spacing:4px;padding:12px 28px;text-align:center;
     transition:all .08s;text-transform:uppercase;font-family:inherit;}
   .btn:hover{background:var(--red);color:#fff;border-color:var(--red);box-shadow:0 0 18px rgba(255,36,24,.5);}
-  .btn.primary{background:linear-gradient(180deg,#a01108,#6f0b05);border-color:var(--red);color:#fff;font-size:21px;padding:16px 30px;}
+  .btn.primary{background:linear-gradient(180deg,#a01108,#6f0b05);border-color:var(--red);color:#fff;font-size:20px;padding:14px 28px;}
   .btn.primary:hover{background:var(--red);}
-  .btn.small{font-size:13px;padding:9px 18px;letter-spacing:2px;}
+  .btn.small{font-size:13px;padding:8px 16px;letter-spacing:2px;}
+  .btn.active-tab{background:var(--red) !important;color:#fff !important;border-color:var(--red) !important;box-shadow:0 0 12px rgba(255,36,24,.6);}
   .footnote{position:absolute;bottom:16px;font-size:11px;letter-spacing:1px;color:rgba(201,184,160,.5);}
 
   /* ---------- Настройки ---------- */
-  #settings .panel, #help .panel{width:min(680px,92vw);max-height:86vh;overflow:auto;border:1px solid var(--line);
+  #settings .panel, #help .panel{width:min(720px,92vw);max-height:86vh;overflow:auto;border:1px solid var(--line);
     background:var(--panel);padding:22px 26px;pointer-events:auto;}
   .panel h2{margin:0 0 16px;font-size:20px;letter-spacing:4px;color:#fff;border-bottom:1px solid var(--line);padding-bottom:10px;}
   .set-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px dotted rgba(107,32,21,.35);}
@@ -129,10 +170,32 @@
   <div id="crosshair"><span class="l t"></span><span class="l b"></span><span class="l lf"></span><span class="l rt"></span><span class="dot"></span></div>
   <div id="hitmarker"><span class="a"></span><span class="b"></span><span class="c"></span><span class="d"></span></div>
 
-  <div id="top-left">
+  <!-- Интерактивный прицельный промпт для капсулы, дверей, терминалов и предметов -->
+  <div id="interaction-prompt" class="hidden">[E] ВЗАИМОДЕЙСТВИЕ</div>
+
+  <!-- Блок текущей сюжетной задачи на космическом корабле -->
+  <div id="objective-box">
+    <div id="objective-dot"></div>
+    <div id="objective-text">ЦЕЛЬ: ПОКИНУТЬ СТАЗИС-КАПСУЛУ [E / ПРОБЕЛ]</div>
+  </div>
+
+  <div id="top-left" class="hidden">
     <div id="wave-label">ВОЛНА 1</div>
     <div id="kills-label">УБИТО: 0</div>
     <div id="score-label">ОЧКИ: 0</div>
+  </div>
+
+  <!-- Панель управления песочницей и превью монстров -->
+  <div id="sandbox-panel" class="hidden">
+    <span style="font-size:11px;font-weight:700;letter-spacing:2px;color:var(--amber);margin-right:2px;">ТЕСТ:</span>
+    <button class="btn small sb-btn" id="sb-zombie" title="Горячая клавиша: 4"><kbd>4</kbd> ЗОМБИ</button>
+    <button class="btn small sb-btn" id="sb-minion" title="Горячая клавиша: 5"><kbd>5</kbd> СКОРОХОД</button>
+    <button class="btn small sb-btn" id="sb-rogue" title="Горячая клавиша: 6"><kbd>6</kbd> РЕЗАК</button>
+    <button class="btn small sb-btn" id="sb-warrior" title="Горячая клавиша: 7"><kbd>7</kbd> КЛЕЩ</button>
+    <button class="btn small sb-btn" id="sb-mage" title="Горячая клавиша: 8"><kbd>8</kbd> ПЛОД</button>
+    <div style="width:1px;height:20px;background:#51190f;margin:0 2px;"></div>
+    <button class="btn small sb-btn" id="sb-ai-toggle" style="color:#77ff88;border-color:#387038;" title="Горячая клавиша: 9"><kbd>9</kbd> ИИ: ВЫКЛ (МАНЕКЕН)</button>
+    <button class="btn small sb-btn" id="sb-clear" style="border-color:#a01108;" title="Горячая клавиша: 0"><kbd>0</kbd> ОЧИСТИТЬ</button>
   </div>
 
   <div id="style">
@@ -151,9 +214,14 @@
   </div>
 
   <div id="bottom-right">
-    <div id="weapon-name">ШТУРМОВОЙ МОДУЛЬ «СЕКТОР-9» · 6.8 ММ</div>
+    <div id="weapon-slots">
+      <span id="slot-1" class="w-slot active"><kbd>1</kbd> «СЕКТОР-9»</span>
+      <span id="slot-2" class="w-slot"><kbd>2</kbd> «ПАЛАЧ»</span>
+    </div>
+    <div id="weapon-name">ШТУРМОВОЙ АВТОМАТ «СЕКТОР-9» · 6.8 ММ</div>
     <div id="ammo-row"><span id="ammo-num" class="mono">30</span><span id="ammo-mag" class="mono">/ ∞</span></div>
     <div id="reload-note"></div>
+    <div id="weapon-subinfo"><span id="flashlight-status"><kbd>T</kbd> ФОНАРЬ: ВКЛ</span> · <span><kbd>F</kbd>/<kbd>ПКМ</kbd> ПИНОК</span></div>
   </div>
 
   <div id="banner"><div id="banner-main"></div><div id="banner-sub"></div></div>
@@ -168,21 +236,45 @@
 <div id="damage-flash"></div>
 <div id="fade" style="position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:9;"></div>
 
+<!-- Всплывающий Sci-Fi ЭЛТ-Терминал данных -->
+<div id="terminal-screen" class="hidden">
+  <div id="terminal-box">
+    <div id="terminal-title">МЕДИЦИНСКИЙ ОТСЕК · ЗАПИСЬ Д-РА ЧЕН</div>
+    <div id="terminal-content"></div>
+    <div id="terminal-footer">
+      <button class="btn small" id="btn-terminal-close">[E / ESC] ЗАКРЫТЬ ТЕРМИНАЛ</button>
+    </div>
+  </div>
+</div>
+
 <div id="loading" class="screen">
-  <div class="title">ВОКСЕЛЬНАЯ <em>БОЙНЯ</em></div>
-  <div class="subtitle">ЗАГРУЗКА АССЕТОВ…</div>
+  <div class="title">ВОКСЕЛЬНЫЙ <em>ЭРЕБ</em></div>
+  <div class="subtitle">ИНИЦИАЛИЗАЦИЯ СТАЗИС-КАПСУЛЫ…</div>
   <div class="bar"><div></div></div>
 </div>
 
 <div id="menu" class="screen hidden">
-  <div class="title">ВОКСЕЛЬНАЯ <em>БОЙНЯ</em></div>
-  <div class="subtitle">АРЕНА · ПРОТОТИП 0.1</div>
+  <div class="title">ВОКСЕЛЬНЫЙ <em>ЭРЕБ</em></div>
+  <div class="subtitle">КОСМИЧЕСКИЙ СУРВАЙВАЛ-ХОРРОР · СТАНЦИЯ «ЭРЕБ-7»</div>
   <div class="menu-btns">
-    <button class="btn primary" id="btn-play">В БОЙ</button>
+    <!-- Выбор режима игры -->
+    <div style="background:rgba(0,0,0,0.55);border:1px solid #51190f;padding:12px 14px;border-radius:3px;text-align:center;">
+      <div style="font-size:11px;letter-spacing:3px;color:#c9b8a0;margin-bottom:8px;font-weight:700;">РЕЖИМ ИГРЫ:</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn small mode-btn active-tab" id="mode-campaign" data-mode="campaign" style="flex:1;">🚀 КАМПАНИЯ: ЭРЕБ-7</button>
+        <button class="btn small mode-btn" id="mode-sandbox" data-mode="sandbox" style="flex:1;">🔬 ПЕСОЧНИЦА / ТЕСТ</button>
+      </div>
+      <div id="mode-desc" style="font-size:12px;color:#f0e0d0;margin-top:10px;line-height:1.5;">
+        Пробуждение в крио-капсуле на заражённом звездолёте «Эреб-7». Исследование медблока, сбор оружия, поиск ключ-карт, терминалы данных и запуск реактора.
+      </div>
+    </div>
+
+    <!-- Основная кнопка старта -->
+    <button class="btn primary" id="btn-play" style="font-size:22px;padding:16px 28px;">🚀 НАЧАТЬ ИГРУ</button>
     <button class="btn" id="btn-settings">НАСТРОЙКИ</button>
-    <button class="btn" id="btn-help">УПРАВЛЕНИЕ</button>
+    <button class="btn" id="btn-help">УПРАВЛЕНИЕ И СЮЖЕТ</button>
   </div>
-  <div class="footnote">SKIASH TELEPORT · CC0-ассеты: KayKit Skeletons · звук синтезируется в реальном времени</div>
+  <div class="footnote">Звездолёт «Эреб-7» · 3D флюидная кровь · тактический ИИ · физика ящиков · синтезированный звук</div>
 </div>
 
 <div id="settings" class="screen overlay hidden">
@@ -203,21 +295,25 @@
 
 <div id="help" class="screen overlay hidden">
   <div class="panel">
-    <h2>УПРАВЛЕНИЕ</h2>
+    <h2>УПРАВЛЕНИЕ И МЕХАНИКИ</h2>
     <div class="help-cols">
-      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> — движение</div>
-      <div><kbd>МЫШЬ</kbd> — обзор</div>
-      <div><kbd>ЛКМ</kbd> — огонь</div>
+      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> — движение и 360° стрейфы</div>
+      <div><kbd>МЫШЬ</kbd> — прицеливание</div>
+      <div><kbd>ЛКМ</kbd> — огонь / выстрел</div>
+      <div><kbd>1</kbd> / <kbd>2</kbd> / <kbd>Q</kbd> / <kbd>КОЛЕСО</kbd> — смена оружия</div>
+      <div><kbd>F</kbd> / <kbd>ПКМ</kbd> / <kbd>V</kbd> — боевой пинок (нога)</div>
+      <div><kbd>T</kbd> / <kbd>L</kbd> — тактический фонарь</div>
       <div><kbd>R</kbd> — перезарядка</div>
-      <div><kbd>SHIFT</kbd> — спринт</div>
-      <div><kbd>ПРОБЕЛ</kbd> — прыжок</div>
-      <div><kbd>←</kbd><kbd>→</kbd> — поворот (резерв)</div>
-      <div><kbd>ESC</kbd> — пауза</div>
+      <div><kbd>SHIFT</kbd> — спринт (все 8 направлений) · <kbd>ПРОБЕЛ</kbd> — прыжок</div>
+      <div><kbd>4</kbd> / <kbd>5</kbd> / <kbd>6</kbd> / <kbd>7</kbd> / <kbd>8</kbd> — спавн тварей (песочница)</div>
+      <div><kbd>9</kbd> — переключить ИИ (Вкл / Выкл)</div>
+      <div><kbd>0</kbd> — очистить / сбросить арену</div>
     </div>
-    <p style="font-size:13px;line-height:1.7;color:#c9b8a0">
-      Хедшот (верхняя часть черепа) наносит ×2.6 урона и мгновенно хоронит мелких.
-      Подбирайте красные аптечки. Стиль растёт за убийства и падает со временем — держите темп.
-      Маги кидают плазму: стрейфьтесь. Громила ломает щитом — не подходите в упор.
+    <p style="font-size:13px;line-height:1.7;color:#c9b8a0;margin-top:14px">
+      <b>ОБРЕЗ «ПАЛАЧ»:</b> Выпускает смертоносный веер картечи. В упор сбивает с ног и отрывает конечности. Переломная перезарядка.<br>
+      <b>БОЕВОЙ ПИНОК:</b> Опрокидывает монстров на пол, прерывает атаки, швыряет отстреленные черепа и толкает ящики словно таран.<br>
+      <b>ИНТЕРАКТИВНЫЕ ЯЩИКИ:</b> Физические ящики сдвигаются от выстрелов, переворачиваются от картечи и давят тварей при ударе.<br>
+      <b>МЕДЛЕННЫЙ ЗОМБИ:</b> Гниющий упырь с перекошенной сломанной шеей, жадно тянущейся вперед рукой и волочащейся ногой.
     </p>
     <div style="margin-top:14px"><button class="btn small" id="btn-help-close">НАЗАД</button></div>
   </div>
