@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rand, clamp } from './config.js';
-import { buildRifle } from './weapon-model.js';
+import { buildRifle, buildShotgun, buildKickLeg } from './weapon-model.js';
 
 const _fwd = new THREE.Vector3();
 const _right = new THREE.Vector3();
@@ -8,79 +8,327 @@ const _wish = new THREE.Vector3();
 const _muzzleP = new THREE.Vector3();
 const _hitP = new THREE.Vector3();
 const _rightDir = new THREE.Vector3();
+const _wrO = new THREE.Vector3(); // бег по стенам: точка проверки
+const _wrD = new THREE.Vector3(); // бег по стенам: направление к стене
 
 export class Player {
-  constructor(camera, gunAssets) {
+  constructor(camera) {
     this.camera = camera;
-    this.pos = new THREE.Vector3(0, 0, 16);
+    this.pos = new THREE.Vector3(0, 0, 0);
     this.vel = new THREE.Vector3();
     this.yaw = 0; this.pitch = 0;
     this.hp = 100; this.maxHp = 100;
     this.onGround = true;
     this.radius = 0.38; this.eyeH = 1.62; this.height = 1.75;
 
-    // оружие
-    this.mag = 30; this.magSize = 30;
-    this.fireInterval = 60 / 640;
-    this.cd = 0; this.heat = 0;
-    this.reloading = false; this.reloadT = 0; this.reloadDur = 1.5;
-    this.recoilPitch = 0; this.recoilVel = 0; this.kickZ = 0;
-    this.baseDamage = 14;
+    // ========================================================================
+    // Оружие и инвентарь
+    // ========================================================================
+    this.rifleAssets = buildRifle();
+    this.shotgunAssets = buildShotgun();
+    this.kickLeg = buildKickLeg();
 
-    // вьюмодель
-    this.gun = gunAssets.group;
-    this.gunMuzzle = gunAssets.muzzle;
-    this.gunBolt = gunAssets.bolt;
-    this.gunBase = new THREE.Vector3(0.24, -0.22, -0.44);
-    this.gun.position.copy(this.gunBase);
-    camera.add(this.gun);
+    // Базовые позиции вьюмоделей
+    this.rifleBase = new THREE.Vector3(0.24, -0.22, -0.44);
+    this.shotgunBase = new THREE.Vector3(0.22, -0.20, -0.42);
+
+    this.rifleAssets.group.position.copy(this.rifleBase);
+    this.shotgunAssets.group.position.copy(this.shotgunBase);
+
+    camera.add(this.rifleAssets.group);
+    camera.add(this.shotgunAssets.group);
+    camera.add(this.kickLeg);
+
+    this.weapons = [
+      {
+        name: 'СЕКТОР-9',
+        type: 'rifle',
+        assets: this.rifleAssets,
+        basePos: this.rifleBase,
+        magSize: 30,
+        mag: 30,
+        fireInterval: 60 / 640,
+        reloadDur: 1.5,
+        baseDamage: 14,
+        pellets: 1,
+        spread: 0.005,
+        auto: true,
+      },
+      {
+        name: 'ПАЛАЧ',
+        type: 'shotgun',
+        assets: this.shotgunAssets,
+        basePos: this.shotgunBase,
+        magSize: 2,
+        mag: 2,
+        fireInterval: 0.42,
+        reloadDur: 1.85,
+        baseDamage: 18,
+        pellets: 9,
+        spread: 0.055,
+        auto: false,
+      },
+    ];
+
+    // Разблокированное оружие (в кампании изначально [false, false], в песочнице [true, true])
+    this.unlockedWeapons = [false, false];
+    this.curSlot = -1; // -1 = безоружен
+    this.prevSlot = -1;
+    this.switching = false;
+    this.switchT = 0;
+    this.switchDur = 0.32;
+    this.nextSlot = -1;
+
+    // Текущее состояние активного оружия
+    this.cd = 0;
+    this.heat = 0;
+    this.reloading = false;
+    this.reloadT = 0;
+    this.recoilPitch = 0;
+    this.recoilVel = 0;
+    this.kickZ = 0;
+
+    // ========================================================================
+    // Тактический фонарь (Tactical Flashlight System)
+    // ========================================================================
+    this.flashlightOn = true;
+
+    // Мощность фонаря (физические канделы): тёмные PS1-текстуры требуют
+    // сильного луча, иначе фонарь неотличим от темноты.
+    this.FLASH_SPOT = 34;
+    this.FLASH_SPILL = 7;
+    this.spotLight = new THREE.SpotLight(0xfff6e4, this.FLASH_SPOT, 54, Math.PI / 3.4, 0.65, 1.1);
+    this.spotLight.position.set(0.16, -0.12, -0.05);
+
+    this.spotLightTarget = new THREE.Object3D();
+    this.spotLightTarget.position.set(0.16, -0.12, -15);
+    camera.add(this.spotLightTarget);
+    this.spotLight.target = this.spotLightTarget;
+    camera.add(this.spotLight);
+
+    this.spillLight = new THREE.PointLight(0xffecd0, this.FLASH_SPILL, 18, 1.4);
+    this.spillLight.position.set(0.16, -0.10, -0.2);
+    camera.add(this.spillLight);
+
+    // Постоянный аварийный свет скафандра (Suit Ambient Light) — окружение всегда видно
+    this.bodyLight = new THREE.PointLight(0xc8e4ff, 3.2, 16, 1.1);
+    this.bodyLight.position.set(0, 0.1, -0.1);
+    camera.add(this.bodyLight);
+
+    // ========================================================================
+    // Боевой армейский пинок (Melee Kick)
+    // ========================================================================
+    // ========================================================================
+    // Паркур (бег по стенам + двойной прыжок) — включается картой (mapDef.parkour)
+    // ========================================================================
+    this.parkourEnabled = false;
+    this.wallRunning = false;   // прямо сейчас бежим по стене
+    this.wallRunT = 0;          // суммарное время бега по стене с последнего отрыва
+    this.wallN = { x: 0, z: 0 };// нормаль стены (наружу, ОТ стены к игроку)
+    this.wallStickCd = 0;       // пауза перед повторным прилипанием после wall-jump
+    this.wallLean = 0;          // текущий крен камеры от стены
+    this.jumpsLeft = 0;         // оставшиеся воздушные прыжки (двойной прыжок)
+    this._wallContact = false;
+
+    this.isKicking = false;
+    this.kickT = 0;
+    this.kickDur = 0.48;
+    this.kickCd = 0;
+    this.kickHitApplied = false;
+
+    // Вьюмодель и покачивание
     this.swayX = 0; this.swayY = 0;
     this.bobPhase = 0; this.bobAmt = 0;
     this.shake = 0;
     this.bobEnabled = true; this.shakeEnabled = true;
 
+    // Колбэки
     this.onShoot = null; this.onHit = null; this.onDry = null; this.onReload = null; this.onDead = null;
+
+    this._updateWeaponVisibility();
   }
 
+  get curWeapon() { return this.curSlot >= 0 ? this.weapons[this.curSlot] : null; }
+  get mag() { return this.curWeapon ? this.curWeapon.mag : 0; }
+  set mag(v) { if (this.curWeapon) this.curWeapon.mag = v; }
+  get magSize() { return this.curWeapon ? this.curWeapon.magSize : 0; }
+  get reloadDur() { return this.curWeapon ? this.curWeapon.reloadDur : 0; }
   get eyePos() { return _hitP.set(this.pos.x, this.pos.y + this.eyeH, this.pos.z); }
 
-  reset() {
-    this.pos.set(0, 0, 16); this.vel.set(0, 0, 0);
-    this.yaw = 0; this.pitch = 0;
+  reset(x = 0, y = 0, z = 0, yaw = 0, mode = 'campaign') {
+    this.pos.set(x, y, z); this.vel.set(0, 0, 0);
+    this.yaw = yaw; this.pitch = 0;
     this.hp = this.maxHp;
-    this.mag = this.magSize; this.reloading = false; this.cd = 0; this.heat = 0;
+
+    this.weapons[0].mag = this.weapons[0].magSize;
+    this.weapons[1].mag = this.weapons[1].magSize;
+
+    if (mode === 'sandbox') {
+      this.unlockedWeapons = [true, true];
+      this.curSlot = 0;
+      this.eyeH = 1.62;
+    } else {
+      // В сюжетной кампании игрок просыпается БЕЗ ОРУЖИЯ в полулежачем положении
+      this.unlockedWeapons = [false, false];
+      this.curSlot = -1;
+      this.eyeH = 1.05;
+    }
+
+    this.prevSlot = -1;
+    this.switching = false;
+    this.switchT = 0;
+
+    this.reloading = false; this.cd = 0; this.heat = 0;
     this.recoilPitch = 0; this.recoilVel = 0; this.shake = 0;
+
+    this.isKicking = false;
+    this.kickT = 0;
+    this.kickCd = 0;
+    this.kickLeg.visible = false;
+
+    this.wallRunning = false;
+    this.wallRunT = 0;
+    this.wallStickCd = 0;
+    this.wallLean = 0;
+    this.jumpsLeft = 0;
+    this._wallContact = false;
+
+    this.flashlightOn = (mode === 'sandbox');
+    this.spotLight.intensity = this.flashlightOn ? this.FLASH_SPOT : 0;
+    this.spillLight.intensity = this.flashlightOn ? this.FLASH_SPILL : 0;
+
+    this._updateWeaponVisibility();
   }
 
-  // dir: экранное направление с разбросом
+  unlockWeapon(slot, sfx, hud) {
+    if (slot < 0 || slot >= this.weapons.length) return;
+    this.unlockedWeapons[slot] = true;
+    this.curSlot = slot;
+    this.reloading = false;
+    this.switching = false;
+    this._updateWeaponVisibility();
+
+    if (hud) {
+      hud.setWeaponSlot(this.curSlot);
+      hud.setAmmo(this.mag, this.magSize, false, this.curSlot === 1, false);
+    }
+    if (sfx) sfx.weaponSwitch();
+  }
+
+  _updateWeaponVisibility() {
+    this.rifleAssets.group.visible = (this.curSlot === 0 && this.unlockedWeapons[0]);
+    this.shotgunAssets.group.visible = (this.curSlot === 1 && this.unlockedWeapons[1]);
+  }
+
+  toggleFlashlight(sfx, hud) {
+    this.flashlightOn = !this.flashlightOn;
+    this.spotLight.intensity = this.flashlightOn ? this.FLASH_SPOT : 0;
+    this.spillLight.intensity = this.flashlightOn ? this.FLASH_SPILL : 0;
+    if (sfx) sfx.click();
+    if (hud) hud.setFlashlight(this.flashlightOn);
+  }
+
+  switchWeapon(slot, sfx, hud) {
+    if (slot === this.curSlot || slot < 0 || slot >= this.weapons.length) return;
+    if (!this.unlockedWeapons[slot] || this.switching) return;
+
+    this.switching = true;
+    this.switchT = 0;
+    this.nextSlot = slot;
+    if (this.reloading) this.reloading = false;
+    if (sfx) sfx.weaponSwitch();
+  }
+
+  quickSwitch(sfx, hud) {
+    if (this.unlockedWeapons[0] && this.unlockedWeapons[1]) {
+      const next = this.curSlot === 0 ? 1 : 0;
+      this.switchWeapon(next, sfx, hud);
+    } else if (this.unlockedWeapons[0]) {
+      this.switchWeapon(0, sfx, hud);
+    } else if (this.unlockedWeapons[1]) {
+      this.switchWeapon(1, sfx, hud);
+    }
+  }
+
+  // Направление выстрела со сферическим разбросом
   _shootDir(spread) {
     this.camera.getWorldDirection(_fwd);
     if (spread > 0) {
-      _fwd.x += rand(-spread, spread); _fwd.y += rand(-spread, spread); _fwd.z += rand(-spread, spread);
+      _fwd.x += rand(-spread, spread);
+      _fwd.y += rand(-spread, spread);
+      _fwd.z += rand(-spread, spread);
       _fwd.normalize();
     }
     return _fwd;
   }
 
-  update(dt, input, arena, ctx) {
-    const { enemies, fx, sfx, hud } = ctx;
+  // Запуск боевого пинка ногой
+  startKick(sfx) {
+    if (this.isKicking || this.kickCd > 0) return;
+    this.isKicking = true;
+    this.kickT = 0;
+    this.kickCd = 0.62;
+    this.kickHitApplied = false;
+    this.kickLeg.visible = true;
+    if (sfx) sfx.swing();
+  }
 
-    // --- движение ---
-    const sprint = input.keys.has('ShiftLeft') || input.keys.has('ShiftRight');
-    const maxSpeed = sprint ? 9.2 : 6.4;
+  update(dt, input, arena, ctx) {
+    const { enemies, fx, sfx, hud, props } = ctx;
+    const w = this.curWeapon;
+
+    // Плавный подъем при пробуждении
+    if (this.eyeH < 1.62) {
+      this.eyeH = Math.min(1.62, this.eyeH + dt * 0.9);
+    }
+
+    // --- Переключение оружия по клавишам ---
+    if (input.keys.has('Digit1') || input.keys.has('Numpad1')) {
+      this.switchWeapon(0, sfx, hud);
+    } else if (input.keys.has('Digit2') || input.keys.has('Numpad2')) {
+      this.switchWeapon(1, sfx, hud);
+    } else if (input.keys.has('KeyQ')) {
+      this.quickSwitch(sfx, hud);
+      input.keys.delete('KeyQ');
+    }
+
+    // Переключение фонарика
+    if (input.keys.has('KeyT') || input.keys.has('KeyL')) {
+      this.toggleFlashlight(sfx, hud);
+      input.keys.delete('KeyT');
+      input.keys.delete('KeyL');
+    }
+
+    // Боевой пинок (F / V / RMB)
+    if (input.kick || input.keys.has('KeyF') || input.keys.has('KeyV')) {
+      this.startKick(sfx);
+      input.kick = false;
+      input.keys.delete('KeyF');
+      input.keys.delete('KeyV');
+    }
+
+    // --- Движение игрока: 360-градусный стрейф по всем направлениям + спринт на Shift ---
+    const isMoving = input.keys.has('KeyW') || input.keys.has('KeyS') || input.keys.has('KeyA') || input.keys.has('KeyD');
+    const sprint = (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight')) && isMoving;
+    const baseSpeed = 6.4;
+    const maxSpeed = sprint ? 10.6 : baseSpeed;
+
     this.camera.getWorldDirection(_fwd); _fwd.y = 0; _fwd.normalize();
-    _right.crossVectors(_fwd, new THREE.Vector3(0, 1, 0)); // fwd×up = вправо
+    _right.crossVectors(_fwd, new THREE.Vector3(0, 1, 0));
+
     let ix = 0, iz = 0;
     if (input.keys.has('KeyW')) iz += 1;
     if (input.keys.has('KeyS')) iz -= 1;
     if (input.keys.has('KeyD')) ix += 1;
     if (input.keys.has('KeyA')) ix -= 1;
+
     _wish.set(0, 0, 0).addScaledVector(_fwd, iz).addScaledVector(_right, ix);
     if (_wish.lengthSq() > 0) _wish.normalize();
 
-    const accel = this.onGround ? 52 : 10;
+    const accel = this.onGround ? (sprint ? 68 : 52) : 12;
     this.vel.x += _wish.x * accel * dt;
     this.vel.z += _wish.z * accel * dt;
+
     if (this.onGround) {
       const fr = Math.max(0, 1 - 9 * dt);
       this.vel.x *= fr; this.vel.z *= fr;
@@ -88,33 +336,152 @@ export class Player {
       if (sp > maxSpeed) { this.vel.x *= maxSpeed / sp; this.vel.z *= maxSpeed / sp; }
     } else {
       const sp = Math.hypot(this.vel.x, this.vel.z);
-      const cap = Math.max(maxSpeed, sp); // в воздухе не разгоняемся сверх
+      const cap = Math.max(maxSpeed, sp);
       if (sp > cap) { this.vel.x *= cap / sp; this.vel.z *= cap / sp; }
     }
 
-    if (this.onGround && input.jump) { this.vel.y = 8.6; this.onGround = false; input.jump = false; }
-    this.vel.y -= 24 * dt;
+    if (input.jump) {
+      if (this.onGround) {
+        this.vel.y = 8.6;
+        this.onGround = false;
+        this.jumpsLeft = this.parkourEnabled ? 1 : 0;
+        input.jump = false;
+      } else if (this.parkourEnabled && this.wallRunning) {
+        // Прыжок ОТ стены: мощный импульс по нормали + вверх, скорость вдоль
+        // стены сохраняется — так перелетают на противоположную стену.
+        this.vel.x += this.wallN.x * 7.6;
+        this.vel.z += this.wallN.z * 7.6;
+        this.vel.y = 8.0;
+        this.wallRunning = false;
+        this.wallStickCd = 0.26;
+        this.jumpsLeft = 1; // после wall-jump снова доступен воздушный прыжок
+        if (sfx) sfx.swing();
+        input.jump = false;
+      } else if (this.parkourEnabled && this.jumpsLeft > 0) {
+        // Двойной прыжок
+        this.vel.y = 7.9;
+        this.jumpsLeft--;
+        if (sfx) sfx.swing();
+        input.jump = false;
+      }
+    }
+    // На стене гравитация почти выключена — иначе бег не «держит» высоту
+    if (this.wallRunning) {
+      this.vel.y -= 5.0 * dt;
+      if (this.vel.y < -1.5) this.vel.y = -1.5;
+    } else {
+      this.vel.y -= 24 * dt;
+    }
 
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
     this.pos.y += this.vel.y * dt;
 
+    const preClampX = this.pos.x, preClampZ = this.pos.z;
     arena.clampCircle(this.pos, this.radius, this.pos.y, this.height);
-    const g = arena.groundTopAt(this.pos.x, this.pos.z, this.pos.y - this.vel.y * dt);
+    if (props && props.clampCircle) {
+      props.clampCircle(this.pos, this.radius, this.pos.y, this.height);
+    }
+
+    // --- Контакт со стеной для бега по стенам ---
+    // Вектор выталкивания из коллайдера = нормаль стены. Рейкаст подтверждает,
+    // что это настоящая стена уровня (а не невидимая граница карты).
+    this._wallContact = false;
+    if (this.parkourEnabled && !this.onGround) {
+      const pushX = this.pos.x - preClampX, pushZ = this.pos.z - preClampZ;
+      const pl = Math.hypot(pushX, pushZ);
+      if (pl > 1e-4) {
+        const nx = pushX / pl, nz = pushZ / pl;
+        _wrO.set(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z);
+        _wrD.set(-nx, 0, -nz);
+        const wallHit = arena.raycastWorld(_wrO, _wrD, this.radius + 0.45);
+        if (wallHit && Math.abs(wallHit.normal.y) < 0.5) {
+          this._wallContact = true;
+          this.wallN.x = nx;
+          this.wallN.z = nz;
+        }
+      }
+      // Проксимити-захват (как в Titanfall): стена в полуметре сбоку от
+      // направления полёта считается контактом — вжиматься в неё не нужно.
+      if (!this._wallContact) {
+        const spd = Math.hypot(this.vel.x, this.vel.z);
+        if (spd > 3) {
+          const ux = this.vel.x / spd, uz = this.vel.z / spd;
+          _wrO.set(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z);
+          for (const side of [1, -1]) {
+            _wrD.set(-uz * side, 0, ux * side); // перпендикуляр к движению
+            const sideHit = arena.raycastWorld(_wrO, _wrD, this.radius + 0.5);
+            if (sideHit && Math.abs(sideHit.normal.y) < 0.5) {
+              this._wallContact = true;
+              this.wallN.x = sideHit.normal.x;
+              this.wallN.z = sideHit.normal.z;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    const gArena = arena.groundTopAt(this.pos.x, this.pos.z, this.pos.y - this.vel.y * dt);
+    const gProps = (props && props.groundTopAt) ? props.groundTopAt(this.pos.x, this.pos.z, this.pos.y - this.vel.y * dt) : 0;
+    const g = Math.max(gArena, gProps);
+
     if (this.pos.y <= g + 0.02 && this.vel.y <= 0) {
       if (!this.onGround && this.vel.y < -9) this.shake = Math.min(0.25, -this.vel.y * 0.012);
       this.pos.y = g; this.vel.y = 0; this.onGround = true;
     } else if (this.pos.y > g + 0.05) this.onGround = false;
     if (this.pos.y < -2) { this.pos.y = 0; this.vel.y = 0; }
 
-    // --- покачивание ---
-    const speedXZ = Math.hypot(this.vel.x, this.vel.z);
-    if (this.onGround && speedXZ > 0.5) this.bobPhase += dt * speedXZ * 1.55;
-    this.bobAmt += ((this.onGround && speedXZ > 0.5 ? 1 : 0) - this.bobAmt) * Math.min(1, dt * 8);
-    const bobY = this.bobEnabled ? Math.sin(this.bobPhase * 2) * 0.028 * this.bobAmt : 0;
-    const bobX = this.bobEnabled ? Math.cos(this.bobPhase) * 0.017 * this.bobAmt : 0;
+    // --- Бег по стенам (wall-run) ---
+    if (this.parkourEnabled) {
+      this.wallStickCd = Math.max(0, this.wallStickCd - dt);
+      const spXZ = Math.hypot(this.vel.x, this.vel.z);
+      if (this.onGround) {
+        this.wallRunning = false;
+        this.wallRunT = 0;
+        this.jumpsLeft = 1;
+      } else if (this._wallContact && this.wallStickCd <= 0 && iz > 0 && this.wallRunT < 2.4 && spXZ > 3.4) {
+        if (!this.wallRunning) {
+          this.wallRunning = true;
+          // Подхват в начале бега: гасим падение, чтобы «зацепиться» за стену
+          if (this.vel.y < 3.0) this.vel.y = 3.0;
+          this.jumpsLeft = 1; // касание стены восстанавливает воздушный прыжок
+        }
+        this.wallRunT += dt;
+        // Убираем составляющую скорости, направленную В стену — скользим вдоль
+        const into = -(this.vel.x * this.wallN.x + this.vel.z * this.wallN.z);
+        if (into > 0) {
+          this.vel.x += this.wallN.x * into;
+          this.vel.z += this.wallN.z * into;
+        }
+        // Лёгкое прилипание — не отклеиваемся на стыках панелей
+        this.vel.x -= this.wallN.x * 5.0 * dt;
+        this.vel.z -= this.wallN.z * 5.0 * dt;
+        // Поддержание крейсерской скорости бега по стене
+        const sp2 = Math.hypot(this.vel.x, this.vel.z);
+        if (sp2 > 0.1 && sp2 < 8.8) {
+          const k = Math.min(8.8, sp2 + 30 * dt) / sp2;
+          this.vel.x *= k;
+          this.vel.z *= k;
+        }
+      } else {
+        this.wallRunning = false;
+      }
+    }
 
-    // --- тряска ---
+    // --- Покачивание и динамический спринт ---
+    const speedXZ = Math.hypot(this.vel.x, this.vel.z);
+    const sprintFrac = clamp((speedXZ - baseSpeed) / (maxSpeed - baseSpeed + 0.01), 0, 1);
+
+    if (this.onGround && speedXZ > 0.5) {
+      const bobFreq = sprint ? 1.85 : 1.55;
+      this.bobPhase += dt * speedXZ * bobFreq;
+    }
+    this.bobAmt += ((this.onGround && speedXZ > 0.5 ? 1 : 0) - this.bobAmt) * Math.min(1, dt * 8);
+    const bobY = this.bobEnabled ? Math.sin(this.bobPhase * 2) * (0.028 + sprintFrac * 0.012) * this.bobAmt : 0;
+    const bobX = this.bobEnabled ? Math.cos(this.bobPhase) * (0.017 + sprintFrac * 0.008) * this.bobAmt : 0;
+
+    // --- Тряска ---
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - dt * 1.6);
       if (!this.shakeEnabled) this.shake = 0;
@@ -122,69 +489,261 @@ export class Player {
     const shX = (Math.random() - 0.5) * this.shake * 0.5;
     const shY = (Math.random() - 0.5) * this.shake * 0.5;
 
-    // --- камера ---
+    // --- Камера ---
     this.recoilVel += (-this.recoilPitch * 130 - this.recoilVel * 13) * dt;
     this.recoilPitch += this.recoilVel * dt;
     this.camera.rotation.order = 'YXZ';
-    this.camera.rotation.set(this.pitch + this.recoilPitch, this.yaw, -ix * 0.014);
+    // Крен от стены: на wall-run камера наклоняется ОТ стены (как в Titanfall)
+    const leanTarget = this.wallRunning
+      ? (this.wallN.x * _right.x + this.wallN.z * _right.z) * -0.21
+      : 0;
+    this.wallLean += (leanTarget - this.wallLean) * Math.min(1, dt * 9);
+    const strafeBank = -ix * (sprint ? 0.026 : 0.018) + this.wallLean;
+    this.camera.rotation.set(this.pitch + this.recoilPitch, this.yaw, strafeBank);
     this.camera.position.set(this.pos.x + bobX + shX, this.pos.y + this.eyeH + bobY + shY, this.pos.z);
 
-    // --- оружие ---
-    this.cd -= dt;
-    this.heat = Math.max(0, this.heat - dt * 0.9);
-    if (this.reloading) {
-      this.reloadT -= dt;
-      if (this.reloadT <= 0) { this.reloading = false; this.mag = this.magSize; }
-    }
-    if (input.fire && !this.reloading && this.cd <= 0) {
-      if (this.mag > 0) this._fire(arena, enemies, fx, sfx, hud);
-      else {
-        this.cd = 0.25; sfx.dry(); this._startReload(sfx);
+    // --- Анимация смены оружия ---
+    let switchDip = 0;
+    if (this.switching) {
+      this.switchT += dt;
+      const half = this.switchDur * 0.5;
+      if (this.switchT < half) {
+        switchDip = (this.switchT / half);
+      } else {
+        if (this.curSlot !== this.nextSlot) {
+          this.prevSlot = this.curSlot;
+          this.curSlot = this.nextSlot;
+          this._updateWeaponVisibility();
+          if (hud) {
+            hud.setWeaponSlot(this.curSlot);
+            hud.setAmmo(this.mag, this.magSize, false, this.curSlot === 1, this.curSlot < 0);
+          }
+        }
+        switchDip = (1 - (this.switchT - half) / half);
+      }
+      if (this.switchT >= this.switchDur) {
+        this.switching = false;
+        switchDip = 0;
       }
     }
-    if (input.reload && !this.reloading && this.mag < this.magSize) this._startReload(sfx);
-    input.reload = false;
-    input.jump = false;
 
-    // --- вьюмодель ---
-    this.swayX += ((input.lookDX || 0)) * 0.00006; this.swayY += ((input.lookDY || 0)) * 0.00006;
-    this.swayX = clamp(this.swayX, -0.03, 0.03); this.swayY = clamp(this.swayY, -0.03, 0.03);
-    this.swayX *= Math.max(0, 1 - dt * 8); this.swayY *= Math.max(0, 1 - dt * 8);
-    this.kickZ *= Math.max(0, 1 - dt * 10);
-    const gp = this.gun.position;
-    gp.set(
-      this.gunBase.x + this.swayX + bobX * 0.6,
-      this.gunBase.y + this.swayY + bobY * 0.8,
-      this.gunBase.z + this.kickZ
-    );
-    let rx = -this.swayY * 4 + this.kickZ * 1.6, ry = this.swayX * 2, rz = 0;
-    if (this.reloading) {
-      const t = 1 - this.reloadT / this.reloadDur;
-      const dip = Math.sin(Math.min(1, t) * Math.PI);
-      rx -= dip * 0.7; rz = dip * 0.35;
-      gp.y -= dip * 0.09;
+    // --- Перезарядка и таймеры оружия ---
+    this.cd -= dt;
+    this.kickCd -= dt;
+    this.heat = Math.max(0, this.heat - dt * 0.9);
+
+    if (this.reloading && w) {
+      this.reloadT -= dt;
+      if (this.reloadT <= 0) {
+        this.reloading = false;
+        this.mag = this.magSize;
+        if (hud) hud.setAmmo(this.mag, this.magSize, false, this.curSlot === 1, false);
+      }
     }
-    this.gun.rotation.set(rx, ry, rz);
-    // затвор
-    const boltBack = Math.max(0, this.kickZ / 0.05);
-    this.gunBolt.position.z = 0.06 + boltBack * 0.045;
+
+    // --- Стрельба (только если оружие экипировано) ---
+    if (w && this.curSlot >= 0 && this.unlockedWeapons[this.curSlot]) {
+      const wantsFire = w.auto ? input.fire : (input.fireOnce || (input.fire && this.cd <= 0));
+      input.fireOnce = false;
+
+      if (wantsFire && !this.reloading && !this.switching && this.cd <= 0) {
+        if (this.mag > 0) {
+          if (w.type === 'shotgun') this._fireShotgun(arena, enemies, fx, sfx, hud, props);
+          else this._fireRifle(arena, enemies, fx, sfx, hud, props);
+        } else {
+          this.cd = 0.25; sfx.dry(); this._startReload(sfx, hud);
+        }
+      }
+
+      if (input.reload && !this.reloading && !this.switching && this.mag < this.magSize) {
+        this._startReload(sfx, hud);
+      }
+    }
+    input.fireOnce = false;
+    input.reload = false;
+
+    // --- Анимация вьюмодели текущего оружия ---
+    if (w && this.curSlot >= 0 && this.unlockedWeapons[this.curSlot]) {
+      this.swayX += ((input.lookDX || 0)) * 0.00006; this.swayY += ((input.lookDY || 0)) * 0.00006;
+      this.swayX = clamp(this.swayX, -0.03, 0.03); this.swayY = clamp(this.swayY, -0.03, 0.03);
+      this.swayX *= Math.max(0, 1 - dt * 8); this.swayY *= Math.max(0, 1 - dt * 8);
+      this.kickZ *= Math.max(0, 1 - dt * 10);
+
+      const curGroup = (this.curSlot === 0 ? this.rifleAssets.group : this.shotgunAssets.group);
+      const curBase = (this.curSlot === 0 ? this.rifleBase : this.shotgunBase);
+      const gp = curGroup.position;
+
+      gp.set(
+        curBase.x + this.swayX + bobX * 0.6,
+        curBase.y + this.swayY + bobY * 0.8 - switchDip * 0.35,
+        curBase.z + this.kickZ
+      );
+
+      let rx = -this.swayY * 4 + this.kickZ * 1.6 - switchDip * 0.8;
+      let ry = this.swayX * 2;
+      let rz = 0;
+
+      if (this.reloading) {
+        const t = 1 - this.reloadT / this.reloadDur;
+        if (w.type === 'rifle') {
+          const dip = Math.sin(Math.min(1, t) * Math.PI);
+          rx -= dip * 0.7; rz = dip * 0.35; gp.y -= dip * 0.09;
+        } else {
+          // Переломная перезарядка двустволки «ПАЛАЧ»
+          const breakPhase = Math.sin(Math.min(1, t) * Math.PI);
+          const barrelAngle = Math.max(0, Math.sin(t * Math.PI)) * 0.85;
+          this.shotgunAssets.barrelGroup.rotation.x = -barrelAngle;
+
+          if (this.shotgunAssets.lever) {
+            this.shotgunAssets.lever.rotation.x = -0.3 + breakPhase * 0.45;
+          }
+
+          rx -= breakPhase * 0.42;
+          rz = breakPhase * 0.32;
+          ry -= breakPhase * 0.15;
+          gp.y -= breakPhase * 0.07;
+          gp.x -= breakPhase * 0.03;
+
+          const sL = this.shotgunAssets.shellL;
+          const sR = this.shotgunAssets.shellR;
+
+          if (t < 0.35) {
+            if (sL && sR) {
+              sL.visible = true;
+              sR.visible = true;
+              const ejectZ = -0.03 + Math.max(0, (t - 0.12) / 0.23) * 0.12;
+              sL.position.z = ejectZ;
+              sR.position.z = ejectZ;
+            }
+          } else if (t < 0.52) {
+            if (!this._shotgunCased) {
+              this._shotgunCased = true;
+              this.camera.getWorldDirection(_fwd);
+              _rightDir.set(0.6, 0.8, -0.2).applyQuaternion(this.camera.quaternion);
+              const muzP = new THREE.Vector3();
+              this.shotgunAssets.barrelGroup.getWorldPosition(muzP);
+              fx.shotgunCasing(muzP, _rightDir);
+            }
+            if (sL && sR) {
+              sL.visible = false;
+              sR.visible = false;
+            }
+          } else if (t < 0.82) {
+            if (sL && sR) {
+              sL.visible = true;
+              sR.visible = true;
+              const insertZ = 0.10 - Math.min(1, (t - 0.52) / 0.28) * 0.13;
+              sL.position.z = insertZ;
+              sR.position.z = insertZ;
+            }
+          } else {
+            if (sL && sR) {
+              sL.visible = true;
+              sR.visible = true;
+              sL.position.z = -0.03;
+              sR.position.z = -0.03;
+            }
+          }
+        }
+      } else {
+        if (this.shotgunAssets.barrelGroup) this.shotgunAssets.barrelGroup.rotation.x = 0;
+        if (this.shotgunAssets.lever) this.shotgunAssets.lever.rotation.x = -0.3;
+        if (this.shotgunAssets.shellL && this.shotgunAssets.shellR) {
+          const hasAmmo = (this.weapons[1].mag > 0);
+          this.shotgunAssets.shellL.visible = hasAmmo;
+          this.shotgunAssets.shellR.visible = (this.weapons[1].mag >= 2);
+          this.shotgunAssets.shellL.position.z = -0.03;
+          this.shotgunAssets.shellR.position.z = -0.03;
+        }
+        this._shotgunCased = false;
+      }
+
+      curGroup.rotation.set(rx, ry, rz);
+
+      if (this.curSlot === 0 && this.rifleAssets.bolt) {
+        const boltBack = Math.max(0, this.kickZ / 0.05);
+        this.rifleAssets.bolt.position.z = 0.06 + boltBack * 0.045;
+      }
+    }
+
+    // --- Анимация боевого пинка (Melee Kick) ---
+    if (this.isKicking) {
+      this.kickT += dt;
+      const kp = this.kickT / this.kickDur;
+
+      let kickProgress = 0;
+      if (kp < 0.35) {
+        kickProgress = Math.sin((kp / 0.35) * (Math.PI / 2));
+      } else {
+        kickProgress = Math.cos(((kp - 0.35) / 0.65) * (Math.PI / 2));
+      }
+
+      this.kickLeg.position.set(
+        0.18 - kickProgress * 0.18,
+        -0.65 + kickProgress * 0.35,
+        -0.25 - kickProgress * 0.55
+      );
+      this.kickLeg.rotation.set(
+        kickProgress * 0.65,
+        -kickProgress * 0.35,
+        kickProgress * 0.2
+      );
+
+      if (kp >= 0.28 && !this.kickHitApplied) {
+        this.kickHitApplied = true;
+        this.camera.getWorldDirection(_fwd);
+        const hitEnemy = enemies.kickMelee(this.eyePos, _fwd, 2.4, 20, 55);
+
+        let hitProp = false;
+        if (props) {
+          const pHit = props.raycast(this.eyePos, _fwd, 2.6);
+          if (pHit) {
+            hitProp = true;
+            const kickImpulse = _fwd.clone().multiplyScalar(44.0).add(new THREE.Vector3(0, 16.0, 0));
+            pHit.prop.applyImpulse(pHit.point, kickImpulse, true);
+            if (sfx) {
+              sfx.crateThud(3.5);
+              sfx.kick();
+            }
+            if (fx) fx.woodImpact(pHit.point, _fwd.clone().negate());
+          }
+        }
+
+        if (hitEnemy || hitProp) {
+          this.shake = Math.min(0.45, this.shake + 0.22);
+        }
+        enemies.alertSound(this.pos, 14, arena);
+      }
+
+      if (this.kickT >= this.kickDur) {
+        this.isKicking = false;
+        this.kickLeg.visible = false;
+      }
+    }
   }
 
-  _startReload(sfx) {
-    this.reloading = true; this.reloadT = this.reloadDur;
-    sfx.reload();
+  _startReload(sfx, hud) {
+    if (this.curSlot < 0 || !this.unlockedWeapons[this.curSlot]) return;
+    this.reloading = true;
+    this.reloadT = this.reloadDur;
+    if (this.curSlot === 1) {
+      sfx.shotgunReload();
+    } else {
+      sfx.reload();
+    }
+    if (hud) hud.setAmmo(this.mag, this.magSize, true, this.curSlot === 1, false);
     if (this.onReload) this.onReload();
   }
 
-  _fire(arena, enemies, fx, sfx, hud) {
+  _fireRifle(arena, enemies, fx, sfx, hud, props = null) {
     this.mag--;
-    this.cd = this.fireInterval;
+    this.cd = this.curWeapon.fireInterval;
     this.heat = Math.min(1, this.heat + 0.085);
-    const spread = 0.004 + this.heat * 0.019 + (this.onGround ? 0 : 0.012) + Math.hypot(this.vel.x, this.vel.z) * 0.0012;
+    const spread = this.curWeapon.spread + this.heat * 0.019 + (this.onGround ? 0 : 0.012) + Math.hypot(this.vel.x, this.vel.z) * 0.0012;
     const dir = this._shootDir(spread).clone();
     const origin = this.camera.getWorldPosition(new THREE.Vector3());
 
-    this.gunMuzzle.getWorldPosition(_muzzleP);
+    this.rifleAssets.muzzle.getWorldPosition(_muzzleP);
     fx.muzzle(_muzzleP, dir);
     _rightDir.set(1, 0.2, 0).applyQuaternion(this.camera.quaternion);
     fx.casing(_muzzleP.clone().addScaledVector(dir, -0.25), _rightDir);
@@ -192,24 +751,129 @@ export class Player {
     this.recoilVel += rand(1.9, 2.5);
     this.kickZ = 0.05;
 
+    enemies.alertSound(origin, 32, arena);
+    if (this.onShoot) this.onShoot();
+
     const MAXD = 120;
     const eHit = enemies.raycast(origin, dir, MAXD);
-    const wHit = arena.raycastWorld(origin, dir, eHit ? eHit.dist : MAXD);
-    let point, hitEnemy = null, head = false;
-    if (eHit && (!wHit || eHit.dist < wHit.dist)) { point = eHit.point; hitEnemy = eHit.enemy; head = eHit.head; }
-    else if (wHit) point = wHit.point;
-    else point = origin.clone().addScaledVector(dir, 80);
+    const pHit = props ? props.raycast(origin, dir, MAXD) : null;
+    const maxWorldD = Math.min(eHit ? eHit.dist : MAXD, pHit ? pHit.dist : MAXD);
+    const wHit = arena.raycastWorld(origin, dir, maxWorldD);
+
+    let point, hitEnemy = null, hitProp = null, head = false, hitZone = 'torso', isCorpse = false;
+
+    const eDist = eHit ? eHit.dist : 9999;
+    const pDist = pHit ? pHit.dist : 9999;
+    const wDist = wHit ? wHit.dist : 9999;
+    const minDist = Math.min(eDist, pDist, wDist);
+
+    if (minDist === eDist && eHit) {
+      point = eHit.point;
+      hitEnemy = eHit.enemy;
+      head = eHit.head;
+      hitZone = eHit.hitZone || 'torso';
+      isCorpse = !!eHit.isCorpse;
+    } else if (minDist === pDist && pHit) {
+      point = pHit.point;
+      hitProp = pHit.prop;
+    } else if (wHit) {
+      point = wHit.point;
+    } else {
+      point = origin.clone().addScaledVector(dir, 80);
+    }
 
     fx.tracer(_muzzleP, point);
 
     if (hitEnemy) {
-      let dmg = this.baseDamage + rand(-2, 2);
+      let dmg = this.curWeapon.baseDamage + rand(-2, 2);
       if (head) dmg *= 2.6;
-      hitEnemy.damage(dmg, point, dir, head);
-      if (this.onHit) this.onHit({ head, killed: hitEnemy.hp <= 0, enemy: hitEnemy });
+      hitEnemy.damage(dmg, point, dir, { head, hitZone, isCorpse });
+      if (this.onHit) this.onHit({ head, killed: hitEnemy.hp <= 0, enemy: hitEnemy, hitZone, isCorpse });
+    } else if (hitProp) {
+      hitProp.damage(this.curWeapon.baseDamage + 6, point, dir, fx, sfx);
+      if (hud) hud.hitmarker(false);
     } else if (wHit) {
       fx.impact(point, wHit.normal);
-      sfx.boneCrack();
+    }
+  }
+
+  _fireShotgun(arena, enemies, fx, sfx, hud, props = null) {
+    this.mag--;
+    this.cd = this.curWeapon.fireInterval;
+    const origin = this.camera.getWorldPosition(new THREE.Vector3());
+
+    this.shotgunAssets.muzzle.getWorldPosition(_muzzleP);
+    this.camera.getWorldDirection(_fwd);
+    fx.shotgunMuzzle(_muzzleP, _fwd);
+    sfx.shotgun();
+
+    enemies.alertSound(origin, 45, arena);
+    this.recoilVel += rand(5.5, 7.5);
+    this.kickZ = 0.12;
+    this.shake = Math.min(0.4, this.shake + 0.16);
+
+    if (this.onShoot) this.onShoot();
+
+    const pellets = this.curWeapon.pellets;
+    const baseSpread = this.curWeapon.spread;
+    let hitAny = false;
+    let totalKilled = 0;
+
+    for (let p = 0; p < pellets; p++) {
+      const dir = this._shootDir(baseSpread).clone();
+      const MAXD = 80;
+      const eHit = enemies.raycast(origin, dir, MAXD);
+      const pHit = props ? props.raycast(origin, dir, MAXD) : null;
+      const maxWorldD = Math.min(eHit ? eHit.dist : MAXD, pHit ? pHit.dist : MAXD);
+      const wHit = arena.raycastWorld(origin, dir, maxWorldD);
+
+      let point, hitEnemy = null, hitProp = null, head = false, hitZone = 'torso', isCorpse = false;
+
+      const eDist = eHit ? eHit.dist : 9999;
+      const pDist = pHit ? pHit.dist : 9999;
+      const wDist = wHit ? wHit.dist : 9999;
+      const minDist = Math.min(eDist, pDist, wDist);
+
+      if (minDist === eDist && eHit) {
+        point = eHit.point;
+        hitEnemy = eHit.enemy;
+        head = eHit.head;
+        hitZone = eHit.hitZone || 'torso';
+        isCorpse = !!eHit.isCorpse;
+      } else if (minDist === pDist && pHit) {
+        point = pHit.point;
+        hitProp = pHit.prop;
+      } else if (wHit) {
+        point = wHit.point;
+      } else {
+        point = origin.clone().addScaledVector(dir, 60);
+      }
+
+      if (p % 2 === 0) {
+        fx.tracer(_muzzleP, point);
+      }
+
+      if (hitEnemy) {
+        hitAny = true;
+        let dmg = this.curWeapon.baseDamage + rand(-3, 3);
+        if (head) dmg *= 2.4;
+        hitEnemy.damage(dmg, point, dir, { head, hitZone, isCorpse });
+
+        if (hitEnemy.hp <= 0) totalKilled++;
+        if (this.onHit) this.onHit({ head, killed: hitEnemy.hp <= 0, enemy: hitEnemy, hitZone, isCorpse });
+
+        if (eHit.dist < 3.8) {
+          fx.bloodFountain(point, dir.clone().add(new THREE.Vector3(0, 0.6, 0)).normalize(), 35, 2.0);
+        }
+      } else if (hitProp) {
+        hitProp.damage(this.curWeapon.baseDamage + 6, point, dir, fx, sfx);
+      } else if (wHit) {
+        fx.impact(point, wHit.normal);
+      }
+    }
+
+    if (hitAny && hud) {
+      hud.hitmarker(totalKilled > 0);
     }
   }
 
@@ -218,8 +882,9 @@ export class Player {
     this.hp = Math.max(0, this.hp - amount);
     this.shake = Math.min(0.55, this.shake + 0.22);
     sfx.hurt();
-    hud.damageFlash();
+    if (hud) hud.damageFlash();
     if (this.hp <= 0 && this.onDead) this.onDead();
   }
+
   heal(n) { this.hp = Math.min(this.maxHp, this.hp + n); }
 }

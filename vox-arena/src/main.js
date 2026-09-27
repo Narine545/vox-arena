@@ -1,15 +1,14 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { ASSETS } from './assets.js';
 import { loadSettings, saveSettings, PARTICLE_BUDGET, clamp } from './config.js';
 import { makeTextures } from './textures.js';
 import { PS1 } from './ps1.js';
 import { AudioSys } from './audio.js';
 import { FX } from './fx.js';
-import { buildArena } from './arena.js';
+import { buildArena, MAPS } from './arena.js';
+import { StarshipLevel } from './starship.js';
+import { PropsManager } from './props.js';
 import { Player } from './player.js';
-import { buildRifle } from './weapon-model.js';
-import { EnemyManager, TYPES } from './enemies.js';
+import { EnemyManager } from './enemies.js';
 import { Waves } from './waves.js';
 import { HUD } from './hud.js';
 
@@ -31,18 +30,22 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.08, 500);
 camera.rotation.order = 'YXZ';
 scene.add(camera);
-const fogObj = new THREE.Fog(0x140609, 12, 95);
+const fogObj = new THREE.Fog(0x06080d, 4, 65);
 scene.fog = settings.fog ? fogObj : null;
 
 const T = makeTextures();
-const arena = buildArena(scene, T);
+let currentMapId = 'starship'; // По умолчанию сюжетный звездолёт
+let currentGameMode = 'campaign'; // 'campaign' | 'sandbox'
+const props = new PropsManager(scene, T);
+let arena = new StarshipLevel(scene, T, props);
 const sfx = new AudioSys();
 const fx = new FX(scene, T);
 fx.setCamera(camera);
+
 const enemies = new EnemyManager(scene, T, fx, sfx, {
-  onKill: null, hud: null, // заполняется ниже
+  onKill: null, hud: null,
 });
-const player = new Player(camera, buildRifle());
+const player = new Player(camera);
 
 // ============================== состояние игры ==============================
 let state = 'loading'; // loading | menu | playing | paused | dead
@@ -89,22 +92,28 @@ function onKill(e, head, gibbed) {
 enemies.hooks.onKill = onKill;
 
 player.onShoot = () => { shotsFired++; };
-player.onHit = ({ head, killed }) => {
+player.onHit = ({ head, killed, hitZone, isCorpse }) => {
   shotsHit++;
-  if (killed) return; // хитмаркер уже показан в onKill
+  if (killed || isCorpse) return;
   hud.hitmarker(false);
   if (head) { stylePts += 25; hud.styleEvent('ХЕДШОТ +25'); sfx.headshot(); headshots++; }
   else stylePts += 6;
 };
 player.onReload = () => { };
 player.onDead = () => {
+  if (currentGameMode === 'sandbox') {
+    player.hp = player.maxHp;
+    hud.setHP(player.hp, player.maxHp);
+    hud.styleEvent('ВОССТАНОВЛЕНИЕ ТЕСТОВОЙ БРОНИ');
+    return;
+  }
   state = 'dead';
   input.fire = false;
   deathT = 0;
   document.exitPointerLock && document.exitPointerLock();
   sfx.stopMusic();
   sfx.gib();
-  // гибс не в камеру: в 1.6м перед игроком
+  // гибс перед игроком
   const gpos = player.pos.clone();
   gpos.x += -Math.sin(player.yaw) * 1.6;
   gpos.z += -Math.cos(player.yaw) * 1.6;
@@ -113,7 +122,7 @@ player.onDead = () => {
   setTimeout(() => hud.fadeToBlack(), 500);
   setTimeout(() => {
     hud.death({
-      wave: waves.num, kills,
+      wave: 1, kills,
       acc: shotsFired ? Math.round(100 * shotsHit / shotsFired) : 0,
       headshots, score,
     });
@@ -121,19 +130,67 @@ player.onDead = () => {
 };
 
 const waves = new Waves(enemies, arena, {
-  waveStart: (n, total) => { hud.setWave(n); hud.banner('ВОЛНА ' + n, 'ПРОТИВНИКОВ: ' + total); sfx.waveHorn(); },
-  countdown: (t, next) => hud.countdown(t, next),
+  waveStart: (n, total) => {},
+  countdown: (t, next) => {},
   portal: (x, z) => { fx.portal(new THREE.Vector3(x, 0, z)); },
-  waveClear: n => {
-    hud.banner('ВОЛНА ' + n + ' ЗАЧИЩЕНА', 'ВОССТАНОВЛЕНО +15 БРОНИ · СТИЛЬ +150');
-    player.heal(15); stylePts += 150; sfx.waveClear();
-  },
+  waveClear: n => {},
 });
 
-function onPickup() { player.heal(30); sfx.pickup(); hud.styleEvent('+30 БРОНЕПЛАСТИНЫ'); }
+function onPickup() { player.heal(35); sfx.pickup(); hud.styleEvent('+35 БРОНЕПЛАСТИНЫ'); }
+
+function setMap(mapId) {
+  currentMapId = mapId;
+  if (arena) arena.clear();
+  props.clear();
+  if (mapId === 'starship') {
+    arena = new StarshipLevel(scene, T, props);
+  } else {
+    arena = buildArena(scene, T, currentMapId, props);
+    waves.setArena(arena);
+  }
+}
+
+// ============================== СПАВНЕР И ПЕСОЧНИЦА ==============================
+function spawnSandboxMonster(typeName) {
+  if (state !== 'playing') return;
+  const dist = 5.5;
+  const yaw = player.yaw;
+  const wx = player.pos.x - Math.sin(yaw) * dist;
+  const wz = player.pos.z - Math.cos(yaw) * dist;
+  const aiDisabled = !hud.aiEnabledInSandbox;
+
+  const e = enemies.spawn(typeName, wx, wz, 1, aiDisabled);
+  if (e) {
+    fx.portal(new THREE.Vector3(wx, 0, wz));
+    sfx.pickup();
+    const modeStr = aiDisabled ? 'МАНЕКЕН (ИИ ВЫКЛ)' : 'БОЕВОЙ (ИИ ВКЛ)';
+    hud.styleEvent(`СПАВН: ${e.T.label} [${modeStr}]`);
+  }
+}
+
+function toggleSandboxAI() {
+  if (state !== 'playing') return;
+  const next = !hud.aiEnabledInSandbox;
+  hud.setSandboxAIToggle(next);
+  enemies.setAllAI(next);
+  sfx.pickup();
+  hud.styleEvent(next ? 'ИИ ВСЕХ ВРАГОВ: ВКЛ (БОЙ)' : 'ИИ ВСЕХ ВРАГОВ: ВЫКЛ (МАНЕКЕН)');
+}
+
+function clearSandbox() {
+  if (state !== 'playing') return;
+  enemies.clear();
+  fx.clear();
+  props.clear();
+  if (arena) arena.clear();
+  arena = (currentMapId === 'starship') ? new StarshipLevel(scene, T, props) : buildArena(scene, T, currentMapId, props);
+  if (currentMapId !== 'starship') waves.setArena(arena);
+  sfx.pickup();
+  hud.styleEvent('АРЕНА И ОБЪЕКТЫ ПОЛНОСТЬЮ СБРОШЕНЫ');
+}
 
 // ============================== ввод ==============================
-const input = { keys: new Set(), fire: false, reload: false, jump: false, lookDX: 0, lookDY: 0 };
+const input = { keys: new Set(), fire: false, fireOnce: false, kick: false, reload: false, jump: false, lookDX: 0, lookDY: 0 };
 const SENS = 0.0021;
 
 function look(dx, dy) {
@@ -150,64 +207,153 @@ function enableFallback() {
   if (fallbackLook) return;
   fallbackLook = true;
   hud.fallback('Захват мыши недоступен в этом окне — обзор мышью по экрану или стрелками ←→↑↓. Для полного захвата скачайте файл и откройте локально.');
-  hud.hint('ЛКМ — огонь · R — перезарядка · SHIFT — бег · ПРОБЕЛ — прыжок · ESC — пауза');
+  hud.hint('ЛКМ — огонь · E — взаимодействие/терминалы · 1/2 — оружие · F/ПКМ — пинок · T — фонарь');
 }
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
-  if (!locked && state === 'playing' && !fallbackLook) pauseGame();
+  if (!locked && state === 'playing' && !fallbackLook && !hud.isTerminalOpen()) pauseGame();
 });
 document.addEventListener('pointerlockerror', () => enableFallback());
 
 document.addEventListener('mousemove', e => {
-  if (state !== 'playing') return;
+  if (state !== 'playing' || hud.isTerminalOpen()) return;
   if (locked || (fallbackLook && e.buttons >= 0)) look(e.movementX || 0, e.movementY || 0);
 });
+
 canvas.addEventListener('mousedown', e => {
   if (state !== 'playing') return;
+  if (hud.isTerminalOpen()) {
+    hud.hideTerminal();
+    return;
+  }
   if (!locked && !fallbackLook) tryLock();
-  if (e.button === 0) input.fire = true;
+  if (e.button === 0) {
+    input.fire = true;
+    input.fireOnce = true;
+  } else if (e.button === 2) {
+    input.kick = true;
+  }
 });
-window.addEventListener('mouseup', e => { if (e.button === 0) input.fire = false; });
+
+window.addEventListener('mouseup', e => {
+  if (e.button === 0) input.fire = false;
+  if (e.button === 2) input.kick = false;
+});
+
+window.addEventListener('wheel', e => {
+  if (state !== 'playing' || hud.isTerminalOpen()) return;
+  if (e.deltaY > 0) {
+    player.switchWeapon(1, sfx, hud);
+  } else if (e.deltaY < 0) {
+    player.switchWeapon(0, sfx, hud);
+  }
+}, { passive: true });
+
 canvas.addEventListener('contextmenu', e => e.preventDefault());
+
 window.addEventListener('keydown', e => {
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
+
+  if (hud.isTerminalOpen()) {
+    if (e.code === 'KeyE' || e.code === 'Escape' || e.code === 'Space') {
+      hud.hideTerminal();
+    }
+    return;
+  }
+
   input.keys.add(e.code);
   if (e.code === 'KeyR') input.reload = true;
   if (e.code === 'Space') input.jump = true;
+  if (e.code === 'KeyF' || e.code === 'KeyV') input.kick = true;
   if (e.code === 'Escape' && fallbackLook) {
     if (state === 'playing') pauseGame(); else if (state === 'paused') resumeGame();
   }
+
+  // Горячие клавиши спавнера и песочницы
+  if (state === 'playing' && currentGameMode === 'sandbox') {
+    if (e.code === 'Digit4' || e.code === 'Numpad4') spawnSandboxMonster('zombie');
+    if (e.code === 'Digit5' || e.code === 'Numpad5') spawnSandboxMonster('minion');
+    if (e.code === 'Digit6' || e.code === 'Numpad6') spawnSandboxMonster('rogue');
+    if (e.code === 'Digit7' || e.code === 'Numpad7') spawnSandboxMonster('warrior');
+    if (e.code === 'Digit8' || e.code === 'Numpad8') spawnSandboxMonster('mage');
+    if (e.code === 'Digit9' || e.code === 'Numpad9') toggleSandboxAI();
+    if (e.code === 'Digit0' || e.code === 'Numpad0') clearSandbox();
+  }
 });
-window.addEventListener('keyup', e => input.keys.delete(e.code));
-window.addEventListener('blur', () => { input.keys.clear(); input.fire = false; });
+window.addEventListener('keyup', e => {
+  input.keys.delete(e.code);
+  if (e.code === 'KeyF' || e.code === 'KeyV') input.kick = false;
+});
+window.addEventListener('blur', () => { input.keys.clear(); input.fire = false; input.kick = false; });
 
 // ============================== переходы состояний ==============================
-function startRun() {
+function startRun(selectedMap = 'starship', mode = 'campaign') {
+  currentGameMode = mode;
+  if (mode === 'campaign') selectedMap = 'starship';
+  // Режим «Трасса» — это песочница на карте паркур-полигона
+  if (mode === 'parkour') { selectedMap = 'course'; mode = 'sandbox'; }
+  setMap(selectedMap);
+
   sfx.init();
   sfx.setVolumes(settings.sfxVol, settings.musicVol);
   sfx.startMusic();
-  enemies.clear(); fx.clear(); arena.resetPickups();
-  player.reset();
+  enemies.clear(); fx.clear();
+
   kills = score = shotsFired = shotsHit = headshots = stylePts = hitstop = 0;
-  waves.reset();
   hud.forceClearOverlays();
-  hud.noScreen(); hud.showGame(true);
+  hud.noScreen(); hud.showGame(true, mode);
   hud.fadeFromBlack();
-  hud.setHP(player.hp, player.maxHp);
-  hud.setAmmo(player.mag, player.magSize, false);
-  hud.setKills(0); hud.setScore(0); hud.setStyle(0);
-  hud.setWave(0);
-  hud.hint(fallbackLook
-    ? 'ЛКМ — огонь · МЫШЬ/СТРЕЛКИ — обзор · R — перезарядка'
-    : 'ЛКМ — огонь · R — перезарядка · SHIFT — бег · ПРОБЕЛ — прыжок · ESC — пауза');
-  player.gun.visible = true;
+
+  if (mode === 'campaign') {
+    // Начальная позиция: внутри стазис-капсулы 04
+    player.reset(0, 0.4, 0, 0, 'campaign');
+    arena.populateEnemies(enemies);
+    hud.setObjective(arena.currentObjective);
+    hud.setHP(player.hp, player.maxHp);
+    hud.setAmmo(0, 0, false, false, true);
+    hud.setWeaponSlot(-1);
+    hud.setFlashlight(false);
+
+    sfx.heartbeat();
+    hud.banner('СТАНЦИЯ «ЭРЕБ-7»', 'АВАРИЙНЫЙ СБРОС СТАЗИС-КАПСУЛЫ [E / ПРОБЕЛ]');
+    hud.hint('E / ПРОБЕЛ — открыть капсулу · E — взаимодействие · F/ПКМ — пинок · T — фонарь');
+  } else {
+    // РЕЖИМ ПЕСОЧНИЦЫ / БЕСТИАРИЙ
+    const spawn = arena.mapDef ? arena.mapDef.playerSpawn : { x: 0, y: 0, z: 16, yaw: 0 };
+    player.reset(spawn.x, spawn.y, spawn.z, spawn.yaw, 'sandbox');
+    waves.state = 'idle';
+    hud.countdown(0, 0);
+    hud.setSandboxAIToggle(hud.aiEnabledInSandbox);
+    const isParkourMap = !!(arena.mapDef && arena.mapDef.parkour);
+    if (!isParkourMap) enemies.spawn('zombie', 0, 0, 1, !hud.aiEnabledInSandbox);
+    hud.setHP(player.hp, player.maxHp);
+    hud.setAmmo(player.mag, player.magSize, false, false, false);
+    hud.setWeaponSlot(0);
+    if (isParkourMap) {
+      hud.banner('ПОЛИГОН «ВЕРТИКАЛЬ»', 'БЕГ ПО СТЕНАМ · ТАЙМЕР СТАРТУЕТ НА КРОМКЕ ПЛАТФОРМЫ');
+      hud.hint('Разгон + прыжок к стене, держите W — бег по стене · ПРОБЕЛ на стене — прыжок к противоположной · ПРОБЕЛ в воздухе — двойной прыжок');
+    } else {
+      hud.banner('ПЕСОЧНИЦА АКТИВИРОВАНА', 'КЛАВИШИ 4-8: СПАВН · 9: ИИ ВКЛ/ВЫКЛ · 0: ОЧИСТИТЬ');
+      hud.hint('Клавиши 4-8 — спавн тварей · 9 — вкл/выкл ИИ · 0 — очистить · 1/2 — оружие · F — пинок');
+    }
+  }
+
+  // Паркур (бег по стенам + двойной прыжок) включается только картами с
+  // флагом mapDef.parkour (полигон «Вертикаль»)
+  player.parkourEnabled = !!(arena.mapDef && arena.mapDef.parkour);
+
+  // Видимость вьюмоделей определяется режимом: в кампании игрок стартует
+  // безоружным, в песочнице — с автоматом (раньше тут был принудительный
+  // .visible = true, из-за чего «невидимое» оружие висело в кадре).
+  player._updateWeaponVisibility();
   state = 'playing';
   tryLock();
 }
+
 function pauseGame() {
   if (state !== 'playing') return;
-  state = 'paused'; input.fire = false;
+  state = 'paused'; input.fire = false; input.kick = false;
   hud.screen('pause');
 }
 function resumeGame() {
@@ -216,43 +362,31 @@ function resumeGame() {
   if (!fallbackLook) tryLock();
 }
 function quitToMenu() {
-  state = 'menu'; input.fire = false;
+  state = 'menu'; input.fire = false; input.kick = false;
   hud.showGame(false); hud.screen('menu');
   enemies.clear(); fx.clear(); waves.state = 'idle'; hud.countdown(0, 0);
-  player.gun.visible = false;
+  player.rifleAssets.group.visible = false;
+  player.shotgunAssets.group.visible = false;
+  player.kickLeg.visible = false;
   document.exitPointerLock && document.exitPointerLock();
 }
-hud.onPlay = startRun;
+
+hud.onPlay = (map, mode) => startRun(map, mode);
 hud.onResume = resumeGame;
 hud.onQuit = quitToMenu;
-hud.onRestart = startRun;
+hud.onRestart = (map, mode) => startRun(map, mode);
+hud.onMapSelect = mapId => setMap(mapId);
+hud.onSpawn = typeName => spawnSandboxMonster(typeName);
+hud.onToggleAI = () => toggleSandboxAI();
+hud.onClearEnemies = () => clearSandbox();
 hud.onSettingsClose = () => { if (state === 'paused') hud.screen('pause'); else hud.screen('menu'); };
 
-// ============================== загрузка моделей ==============================
-function dataURLtoArrayBuffer(u) {
-  const b = atob(u.split(',')[1]);
-  const a = new Uint8Array(b.length);
-  for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
-  return a.buffer;
-}
-async function boot() {
-  try {
-    const loader = new GLTFLoader();
-    const parsed = {};
-    for (const [type, cfg] of Object.entries(TYPES)) {
-      const buf = dataURLtoArrayBuffer(ASSETS[cfg.glb]);
-      const gltf = await new Promise((res, rej) => loader.parse(buf, '', res, rej));
-      const clips = {};
-      for (const c of gltf.animations) clips[c.name] = c;
-      parsed[type] = { scene: gltf.scene, clips };
-    }
-    enemies.setTemplates(parsed);
-  } catch (e) {
-    console.error('Ошибка загрузки моделей:', e);
-    document.querySelector('#menu .subtitle').textContent = 'ОШИБКА ЗАГРУЗКИ МОДЕЛЕЙ — см. консоль';
-  }
+// ============================== запуск ==============================
+function boot() {
   applyFns.all();
-  player.gun.visible = false;
+  player.rifleAssets.group.visible = false;
+  player.shotgunAssets.group.visible = false;
+  player.kickLeg.visible = false;
   state = 'menu';
   hud.screen('menu');
   window.__VOX__.ready = true;
@@ -273,35 +407,78 @@ function frame(now) {
   if (hitstop > 0) { hitstop -= dt; dt *= 0.12; }
 
   if (state === 'playing') {
+    if (arena.checkInteraction) {
+      const fwd = new THREE.Vector3();
+      camera.getWorldDirection(fwd);
+      const target = arena.checkInteraction(player.pos, fwd, 3.6);
+      if (target) {
+        const promptText = typeof target.prompt === 'function' ? target.prompt() : target.prompt;
+        hud.setInteractionPrompt(promptText);
+        const wantsInteract = input.keys.has('KeyE') || (!arena.podOpened && (input.jump || input.keys.has('Space')));
+        if (wantsInteract) {
+          input.keys.delete('KeyE');
+          input.keys.delete('Space');
+          input.jump = false;
+          target.onUse(player, arena, sfx, hud, fx);
+        }
+      } else {
+        hud.setInteractionPrompt(null);
+      }
+    }
+
     if (input.keys.has('ArrowLeft')) player.yaw += 2.7 * dt;
     if (input.keys.has('ArrowRight')) player.yaw -= 2.7 * dt;
     if (input.keys.has('ArrowUp')) player.pitch = clamp(player.pitch + 1.9 * dt, -1.55, 1.55);
     if (input.keys.has('ArrowDown')) player.pitch = clamp(player.pitch - 1.9 * dt, -1.55, 1.55);
-    player.update(dt, input, arena, { enemies, fx, sfx, hud });
+    player.update(dt, input, arena, { enemies, fx, sfx, hud, props });
     enemies.update(dt, player, arena);
-    waves.update(dt);
-    arena.updatePickups(dt, time, player.pos, onPickup);
-    fx.update(dt);
+    props.update(dt, arena, enemies, player, fx, sfx);
+    if (arena.update) arena.update(dt, time, player.pos);
+    if (arena.updatePickups) arena.updatePickups(dt, time, player.pos, onPickup);
+    if (arena.courseState) {
+      const cs = arena.courseState;
+      if (cs.justStarted) {
+        cs.justStarted = false;
+        hud.styleEvent('СТАРТ! ТАЙМЕР ПОШЁЛ');
+        sfx.click();
+      }
+      if (cs.justFinished) {
+        cs.justFinished = false;
+        hud.banner('ФИНИШ: ' + cs.t.toFixed(2) + ' С',
+          cs.isRecord ? 'НОВЫЙ РЕКОРД ТРАССЫ!' : ('РЕКОРД: ' + cs.best.toFixed(2) + ' С'));
+        hud.styleEvent(cs.isRecord ? 'РЕКОРД! +500' : 'ФИНИШ! +200');
+        sfx.weaponSwitch();
+      }
+    }
+    fx.update(dt, arena);
     stylePts = Math.max(0, stylePts - 55 * dt);
     hud.setHP(player.hp, player.maxHp);
-    hud.setAmmo(player.mag, player.magSize, player.reloading);
+    hud.setAmmo(player.mag, player.magSize, player.reloading, player.curSlot === 1, player.curSlot < 0);
+    hud.setWeaponSlot(player.curSlot);
     hud.setStyle(stylePts);
   } else if (state === 'menu') {
-    const a = time * 0.1;
-    camera.position.set(Math.cos(a) * 23, 8.5 + Math.sin(a * 0.6) * 1.5, Math.sin(a) * 23);
-    camera.lookAt(0, 1.6, 0);
-    fx.update(dt);
+    const a = time * 0.12;
+    if (currentMapId === 'starship') {
+      camera.position.set(Math.cos(a) * 6, 2.2 + Math.sin(a * 0.5) * 0.4, Math.sin(a) * 6);
+      camera.lookAt(0, 1.2, 0);
+    } else if (currentMapId === 'catacombs') {
+      camera.position.set(Math.cos(a) * 14, 6.0 + Math.sin(a * 0.5) * 1.0, Math.sin(a) * 14);
+      camera.lookAt(0, 1.4, 0);
+    } else {
+      camera.position.set(Math.cos(a) * 23, 8.5 + Math.sin(a * 0.6) * 1.5, Math.sin(a) * 23);
+      camera.lookAt(0, 1.6, 0);
+    }
+    fx.update(dt, arena);
   } else if (state === 'dead') {
     deathT += dt;
-    // падение камеры на землю
     const fall = Math.min(1, deathT * 1.8);
     const eye = player.eyeH * (1 - fall) + 0.35 * fall;
     camera.rotation.z = fall * 0.55;
     camera.position.set(player.pos.x, player.pos.y + eye, player.pos.z);
-    fx.update(dt);
-    enemies.update(dt * 0.25, player, arena); // враги «доигрывают» в слоумо
+    fx.update(dt, arena);
+    enemies.update(dt * 0.25, player, arena);
   } else {
-    fx.update(dt * 0.5);
+    fx.update(dt * 0.5, arena);
   }
 
   ps1.render(scene, camera);
@@ -319,17 +496,21 @@ resize();
 
 window.__VOX__ = {
   ready: false,
+  renderer, scene, camera, ps1, THREE,
+  get arena() { return arena; },
   get state() { return state; },
   gfx: applyFns,
-  start: () => startRun(),
-  spawn: (typeName = 'minion', dx = 0, dz = -6) => {
-    // спавн врага в КСЗ-системе игрока (вперёд = -Z)
+  start: (map = 'starship', mode = 'campaign') => startRun(map, mode),
+  startSandbox: (map = 'arena') => startRun(map, 'sandbox'),
+  spawn: (typeName = 'minion', dx = 0, dz = -6, aiDisabled = false) => {
     const c = Math.cos(player.yaw), s = Math.sin(player.yaw);
     const wx = player.pos.x + dx * c - dz * s;
     const wz = player.pos.z + dx * s + dz * c;
-    return enemies.spawn(typeName, wx, wz, 1);
+    return enemies.spawn(typeName, wx, wz, 1, !aiDisabled);
   },
-  enemies, player, waves, hud, fx,
+  setMap: mapId => setMap(mapId),
+  toggleAI: () => toggleSandboxAI(),
+  enemies, player, waves, hud, fx, props,
   killAll: () => enemies.killAllInstant(),
 };
 
