@@ -263,10 +263,20 @@
       <div style="display:flex;gap:8px;">
         <button class="btn small mode-btn active-tab" id="mode-campaign" data-mode="campaign" style="flex:1;">🚀 КАМПАНИЯ: ЭРЕБ-7</button>
         <button class="btn small mode-btn" id="mode-sandbox" data-mode="sandbox" style="flex:1;">🔬 ПЕСОЧНИЦА / ТЕСТ</button>
-        <button class="btn small mode-btn" id="mode-parkour" data-mode="parkour" style="flex:1;">🏃 ТРАССА: ВЕРТИКАЛЬ</button>
       </div>
       <div id="mode-desc" style="font-size:12px;color:#f0e0d0;margin-top:10px;line-height:1.5;">
         Пробуждение в крио-капсуле на заражённом звездолёте «Эреб-7». Исследование медблока, сбор оружия, поиск ключ-карт, терминалы данных и запуск реактора.
+      </div>
+      <!-- Выбор карты (доступен в режиме песочницы) -->
+      <div id="map-select" class="hidden" style="margin-top:12px;">
+        <div style="font-size:11px;letter-spacing:3px;color:#c9b8a0;margin-bottom:8px;font-weight:700;">КАРТА:</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn small map-btn" data-map="arena" style="flex:1;">АРЕНА</button>
+          <button class="btn small map-btn" data-map="catacombs" style="flex:1;">КАТАКОМБЫ</button>
+          <button class="btn small map-btn" data-map="parkour" style="flex:1;">ТРАССА</button>
+          <button class="btn small map-btn" data-map="starship" style="flex:1;">ЗВЕЗДОЛЁТ</button>
+        </div>
+        <div id="map-desc" style="font-size:12px;color:#d8ccc0;margin-top:8px;line-height:1.45;"></div>
       </div>
     </div>
 
@@ -306,6 +316,9 @@
       <div><kbd>T</kbd> / <kbd>L</kbd> — тактический фонарь</div>
       <div><kbd>R</kbd> — перезарядка</div>
       <div><kbd>SHIFT</kbd> — спринт (все 8 направлений) · <kbd>ПРОБЕЛ</kbd> — прыжок</div>
+      <div><kbd>ПРОБЕЛ</kbd> в воздухе — двойной прыжок</div>
+      <div><b>БЕГ ПО СТЕНЕ</b> — прыжок + движение вдоль стены на скорости</div>
+      <div><kbd>ПРОБЕЛ</kbd> на стене — прыжок к противоположной стене</div>
       <div><kbd>4</kbd> / <kbd>5</kbd> / <kbd>6</kbd> / <kbd>7</kbd> / <kbd>8</kbd> — спавн тварей (песочница)</div>
       <div><kbd>9</kbd> — переключить ИИ (Вкл / Выкл)</div>
       <div><kbd>0</kbd> — очистить / сбросить арену</div>
@@ -314,7 +327,8 @@
       <b>ОБРЕЗ «ПАЛАЧ»:</b> Выпускает смертоносный веер картечи. В упор сбивает с ног и отрывает конечности. Переломная перезарядка.<br>
       <b>БОЕВОЙ ПИНОК:</b> Опрокидывает монстров на пол, прерывает атаки, швыряет отстреленные черепа и толкает ящики словно таран.<br>
       <b>ИНТЕРАКТИВНЫЕ ЯЩИКИ:</b> Физические ящики сдвигаются от выстрелов, переворачиваются от картечи и давят тварей при ударе.<br>
-      <b>МЕДЛЕННЫЙ ЗОМБИ:</b> Гниющий упырь с перекошенной сломанной шеей, жадно тянущейся вперед рукой и волочащейся ногой.
+      <b>МЕДЛЕННЫЙ ЗОМБИ:</b> Гниющий упырь с перекошенной сломанной шеей, жадно тянущейся вперед рукой и волочащейся ногой.<br>
+      <b>ПАРКУР:</b> Разгонитесь, прыгните вдоль стены — и бегите по ней. Прыжок со стены бросает к противоположной, двойной прыжок перемахивает разрывы. Трасса «Каньон-9» в песочнице — полигон с жёлтой разметкой маршрута.
     </p>
     <div style="margin-top:14px"><button class="btn small" id="btn-help-close">НАЗАД</button></div>
   </div>

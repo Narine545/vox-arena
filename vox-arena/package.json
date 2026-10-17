@@ -4,7 +4,9 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "node tools/test-systems.mjs"
+    "build": "node tools/build.mjs",
+    "test": "node tools/test-systems.mjs && node tools/headless-test.mjs",
+    "test:browser": "node tools/campaign-walkthrough.mjs && node tools/doortest.mjs && node tools/wallrun-test.mjs"
   },
   "keywords": [],
   "author": "",
@@ -15,11 +17,10 @@
     "@gltf-transform/functions": "^4.5.0",
     "@sparticuz/chromium": "^153.0.0",
     "esbuild": "^0.28.2",
-    "playwright-core": "^1.63.0",
     "sharp": "^0.35.4",
     "three": "^0.186.0"
   },
   "devDependencies": {
-    "playwright": "^1.63.0"
+    "playwright": "^1.64.1"
   }
 }

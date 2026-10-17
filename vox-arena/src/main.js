@@ -148,6 +148,11 @@ function setMap(mapId) {
     arena = buildArena(scene, T, currentMapId, props);
     waves.setArena(arena);
   }
+  // Туман карты: открытые полигоны задают свой (дальний), иначе — корабельный
+  const fc = (arena && arena.fogCfg) || { color: 0x06080d, near: 4, far: 65 };
+  fogObj.color.setHex(fc.color);
+  fogObj.near = fc.near;
+  fogObj.far = fc.far;
 }
 
 // ============================== СПАВНЕР И ПЕСОЧНИЦА ==============================
@@ -291,8 +296,6 @@ window.addEventListener('blur', () => { input.keys.clear(); input.fire = false; 
 function startRun(selectedMap = 'starship', mode = 'campaign') {
   currentGameMode = mode;
   if (mode === 'campaign') selectedMap = 'starship';
-  // Режим «Трасса» — это песочница на карте паркур-полигона
-  if (mode === 'parkour') { selectedMap = 'course'; mode = 'sandbox'; }
   setMap(selectedMap);
 
   sfx.init();
@@ -325,23 +328,13 @@ function startRun(selectedMap = 'starship', mode = 'campaign') {
     waves.state = 'idle';
     hud.countdown(0, 0);
     hud.setSandboxAIToggle(hud.aiEnabledInSandbox);
-    const isParkourMap = !!(arena.mapDef && arena.mapDef.parkour);
-    if (!isParkourMap) enemies.spawn('zombie', 0, 0, 1, !hud.aiEnabledInSandbox);
+    enemies.spawn('zombie', 0, 0, 1, !hud.aiEnabledInSandbox);
     hud.setHP(player.hp, player.maxHp);
     hud.setAmmo(player.mag, player.magSize, false, false, false);
     hud.setWeaponSlot(0);
-    if (isParkourMap) {
-      hud.banner('ПОЛИГОН «ВЕРТИКАЛЬ»', 'БЕГ ПО СТЕНАМ · ТАЙМЕР СТАРТУЕТ НА КРОМКЕ ПЛАТФОРМЫ');
-      hud.hint('Разгон + прыжок к стене, держите W — бег по стене · ПРОБЕЛ на стене — прыжок к противоположной · ПРОБЕЛ в воздухе — двойной прыжок');
-    } else {
-      hud.banner('ПЕСОЧНИЦА АКТИВИРОВАНА', 'КЛАВИШИ 4-8: СПАВН · 9: ИИ ВКЛ/ВЫКЛ · 0: ОЧИСТИТЬ');
-      hud.hint('Клавиши 4-8 — спавн тварей · 9 — вкл/выкл ИИ · 0 — очистить · 1/2 — оружие · F — пинок');
-    }
+    hud.banner('ПЕСОЧНИЦА АКТИВИРОВАНА', 'КЛАВИШИ 4-8: СПАВН · 9: ИИ ВКЛ/ВЫКЛ · 0: ОЧИСТИТЬ');
+    hud.hint('Клавиши 4-8 — спавн тварей · 9 — вкл/выкл ИИ · 0 — очистить · 1/2 — оружие · F — пинок');
   }
-
-  // Паркур (бег по стенам + двойной прыжок) включается только картами с
-  // флагом mapDef.parkour (полигон «Вертикаль»)
-  player.parkourEnabled = !!(arena.mapDef && arena.mapDef.parkour);
 
   // Видимость вьюмоделей определяется режимом: в кампании игрок стартует
   // безоружным, в песочнице — с автоматом (раньше тут был принудительный
@@ -435,21 +428,6 @@ function frame(now) {
     props.update(dt, arena, enemies, player, fx, sfx);
     if (arena.update) arena.update(dt, time, player.pos);
     if (arena.updatePickups) arena.updatePickups(dt, time, player.pos, onPickup);
-    if (arena.courseState) {
-      const cs = arena.courseState;
-      if (cs.justStarted) {
-        cs.justStarted = false;
-        hud.styleEvent('СТАРТ! ТАЙМЕР ПОШЁЛ');
-        sfx.click();
-      }
-      if (cs.justFinished) {
-        cs.justFinished = false;
-        hud.banner('ФИНИШ: ' + cs.t.toFixed(2) + ' С',
-          cs.isRecord ? 'НОВЫЙ РЕКОРД ТРАССЫ!' : ('РЕКОРД: ' + cs.best.toFixed(2) + ' С'));
-        hud.styleEvent(cs.isRecord ? 'РЕКОРД! +500' : 'ФИНИШ! +200');
-        sfx.weaponSwitch();
-      }
-    }
     fx.update(dt, arena);
     stylePts = Math.max(0, stylePts - 55 * dt);
     hud.setHP(player.hp, player.maxHp);
@@ -506,7 +484,7 @@ window.__VOX__ = {
     const c = Math.cos(player.yaw), s = Math.sin(player.yaw);
     const wx = player.pos.x + dx * c - dz * s;
     const wz = player.pos.z + dx * s + dz * c;
-    return enemies.spawn(typeName, wx, wz, 1, !aiDisabled);
+    return enemies.spawn(typeName, wx, wz, 1, aiDisabled);
   },
   setMap: mapId => setMap(mapId),
   toggleAI: () => toggleSandboxAI(),

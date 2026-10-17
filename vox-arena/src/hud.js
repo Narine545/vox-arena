@@ -22,7 +22,7 @@ export class HUD {
       'style-event', 'banner', 'banner-main', 'banner-sub', 'countdown', 'hint', 'fps',
       'damage-flash', 'lowhp', 'vignette', 'menu', 'settings', 'help', 'pause', 'death',
       'death-stats', 'loading', 'fallback-note', 'settings-rows', 'fade',
-      'map-desc', 'map-arena', 'map-catacombs',
+      'map-desc', 'map-select', 'map-arena', 'map-catacombs',
       'mode-desc', 'mode-campaign', 'mode-sandbox',
       'sandbox-panel', 'sb-zombie', 'sb-minion', 'sb-rogue', 'sb-warrior', 'sb-mage', 'sb-ai-toggle', 'sb-clear',
       'interaction-prompt', 'objective-box', 'objective-text',
@@ -47,11 +47,7 @@ export class HUD {
   }
 
   selectMap(mapId) {
-    if (mapId === 'starship') {
-      this.selectedMap = 'starship';
-      return;
-    }
-    if (!MAPS[mapId]) return;
+    if (mapId !== 'starship' && !MAPS[mapId]) return;
     this.selectedMap = mapId;
 
     document.querySelectorAll('.map-btn').forEach(btn => {
@@ -59,7 +55,9 @@ export class HUD {
     });
 
     if (this.els['map-desc']) {
-      this.els['map-desc'].textContent = MAPS[mapId].desc;
+      this.els['map-desc'].textContent = (mapId === 'starship')
+        ? 'Сюжетный звездолёт «Эреб-7» в свободном режиме: все отсеки, двери и терминалы — без цепочки задач.'
+        : MAPS[mapId].desc;
     }
 
     if (this.onMapSelect) {
@@ -75,12 +73,19 @@ export class HUD {
     });
 
     if (this.els['mode-desc']) {
-      const descs = {
-        campaign: 'Пробуждение в крио-капсуле на заражённом звездолёте «Эреб-7». Исследование медблока, сбор оружия, поиск ключ-карт, терминалы данных и запуск реактора.',
-        sandbox: 'Свободный спавн любых тварей в центре арены с вкл/выкл ИИ для проверки анимаций и анатомии.',
-        parkour: 'Полигон «Вертикаль»: трасса бега по стенам. Разгон, wall-run, прыжки между параллельными стенами, двойной прыжок и таймер с рекордом трассы.',
-      };
-      this.els['mode-desc'].textContent = descs[mode] || descs.campaign;
+      this.els['mode-desc'].textContent = mode === 'campaign'
+        ? 'Пробуждение в крио-капсуле на заражённом звездолёте «Эреб-7». Исследование медблока, сбор оружия, поиск ключ-карт, терминалы данных и запуск реактора.'
+        : 'Свободный спавн любых тварей с вкл/выкл ИИ, выбор карты, паркур-трасса для бега по стенам.';
+    }
+
+    // Выбор карты доступен только в песочнице; кампания всегда на звездолёте
+    if (this.els['map-select']) {
+      this.els['map-select'].classList.toggle('hidden', mode !== 'sandbox');
+    }
+    if (mode === 'campaign') {
+      this.selectedMap = 'starship';
+    } else {
+      this.selectMap(MAPS[this.selectedMap] ? this.selectedMap : 'arena');
     }
 
     if (this.onModeSelect) {

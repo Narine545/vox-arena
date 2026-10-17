@@ -8,8 +8,6 @@ const _wish = new THREE.Vector3();
 const _muzzleP = new THREE.Vector3();
 const _hitP = new THREE.Vector3();
 const _rightDir = new THREE.Vector3();
-const _wrO = new THREE.Vector3(); // бег по стенам: точка проверки
-const _wrD = new THREE.Vector3(); // бег по стенам: направление к стене
 
 export class Player {
   constructor(camera) {
@@ -20,6 +18,16 @@ export class Player {
     this.hp = 100; this.maxHp = 100;
     this.onGround = true;
     this.radius = 0.38; this.eyeH = 1.62; this.height = 1.75;
+
+    // ========================================================================
+    // Паркур: бег по стенам (wall run) и двойной прыжок
+    // ========================================================================
+    this.wallRunning = false;   // активен ли бег по стене
+    this.wallRunT = 0;          // оставшееся время бега по стене
+    this.wallN = new THREE.Vector3(); // нормаль стены (от стены к игроку)
+    this.wallStickCd = 0;       // кулдаун повторного прилипания после отрыва
+    this.airJumps = 1;          // запас воздушных прыжков (двойной прыжок)
+    this.wallRoll = 0;          // текущий крен камеры от бега по стене
 
     // ========================================================================
     // Оружие и инвентарь
@@ -118,18 +126,6 @@ export class Player {
     // ========================================================================
     // Боевой армейский пинок (Melee Kick)
     // ========================================================================
-    // ========================================================================
-    // Паркур (бег по стенам + двойной прыжок) — включается картой (mapDef.parkour)
-    // ========================================================================
-    this.parkourEnabled = false;
-    this.wallRunning = false;   // прямо сейчас бежим по стене
-    this.wallRunT = 0;          // суммарное время бега по стене с последнего отрыва
-    this.wallN = { x: 0, z: 0 };// нормаль стены (наружу, ОТ стены к игроку)
-    this.wallStickCd = 0;       // пауза перед повторным прилипанием после wall-jump
-    this.wallLean = 0;          // текущий крен камеры от стены
-    this.jumpsLeft = 0;         // оставшиеся воздушные прыжки (двойной прыжок)
-    this._wallContact = false;
-
     this.isKicking = false;
     this.kickT = 0;
     this.kickDur = 0.48;
@@ -181,17 +177,13 @@ export class Player {
     this.reloading = false; this.cd = 0; this.heat = 0;
     this.recoilPitch = 0; this.recoilVel = 0; this.shake = 0;
 
+    this.wallRunning = false; this.wallRunT = 0;
+    this.wallStickCd = 0; this.airJumps = 1; this.wallRoll = 0;
+
     this.isKicking = false;
     this.kickT = 0;
     this.kickCd = 0;
     this.kickLeg.visible = false;
-
-    this.wallRunning = false;
-    this.wallRunT = 0;
-    this.wallStickCd = 0;
-    this.wallLean = 0;
-    this.jumpsLeft = 0;
-    this._wallContact = false;
 
     this.flashlightOn = (mode === 'sandbox');
     this.spotLight.intensity = this.flashlightOn ? this.FLASH_SPOT : 0;
@@ -213,6 +205,28 @@ export class Player {
       hud.setAmmo(this.mag, this.magSize, false, this.curSlot === 1, false);
     }
     if (sfx) sfx.weaponSwitch();
+  }
+
+  // Поиск ближайшей вертикальной стены в радиусе r от игрока (только XZ).
+  // Возвращает { nx, nz, dist } — нормаль от стены к игроку, либо null.
+  // Низкие препятствия (ящики, перила) стеной не считаются: их верх должен
+  // быть заметно выше пояса, иначе по ним нельзя бежать.
+  _probeWall(arena, r) {
+    const cols = arena.colliders;
+    if (!cols) return null;
+    let best = null;
+    for (const c of cols) {
+      if (c.max.y < this.pos.y + 1.2) continue;               // слишком низкая
+      if (this.pos.y + this.height * 0.6 < c.min.y) continue; // висит выше игрока
+      const nx = Math.max(c.min.x, Math.min(this.pos.x, c.max.x));
+      const nz = Math.max(c.min.z, Math.min(this.pos.z, c.max.z));
+      const dx = this.pos.x - nx, dz = this.pos.z - nz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > r * r || d2 < 1e-9) continue;
+      const d = Math.sqrt(d2);
+      if (!best || d < best.dist) best = { nx: dx / d, nz: dz / d, dist: d };
+    }
+    return best;
   }
 
   _updateWeaponVisibility() {
@@ -340,86 +354,100 @@ export class Player {
       if (sp > cap) { this.vel.x *= cap / sp; this.vel.z *= cap / sp; }
     }
 
-    if (input.jump) {
-      if (this.onGround) {
-        this.vel.y = 8.6;
-        this.onGround = false;
-        this.jumpsLeft = this.parkourEnabled ? 1 : 0;
-        input.jump = false;
-      } else if (this.parkourEnabled && this.wallRunning) {
-        // Прыжок ОТ стены: мощный импульс по нормали + вверх, скорость вдоль
-        // стены сохраняется — так перелетают на противоположную стену.
-        this.vel.x += this.wallN.x * 7.6;
-        this.vel.z += this.wallN.z * 7.6;
-        this.vel.y = 8.0;
-        this.wallRunning = false;
-        this.wallStickCd = 0.26;
-        this.jumpsLeft = 1; // после wall-jump снова доступен воздушный прыжок
-        if (sfx) sfx.swing();
-        input.jump = false;
-      } else if (this.parkourEnabled && this.jumpsLeft > 0) {
-        // Двойной прыжок
-        this.vel.y = 7.9;
-        this.jumpsLeft--;
-        if (sfx) sfx.swing();
-        input.jump = false;
+    // ========================================================================
+    // БЕГ ПО СТЕНАМ (wall run): в воздухе, на скорости, вдоль вертикальной
+    // стены. Пока бег активен — гравитация почти выключена, скорость держится
+    // вдоль стены, камера кренится от стены. Прыжок отталкивает К
+    // ПРОТИВОПОЛОЖНОЙ стене и возвращает двойной прыжок.
+    // ========================================================================
+    this.wallStickCd = Math.max(0, this.wallStickCd - dt);
+
+    if (!this.wallRunning && !this.onGround && this.wallStickCd <= 0 && isMoving && this.vel.y < 6.5) {
+      const spXZ0 = Math.hypot(this.vel.x, this.vel.z);
+      if (spXZ0 > 4.2) {
+        const wall = this._probeWall(arena, this.radius + 0.5);
+        if (wall) {
+          // Тангенс стены в сторону текущего движения
+          let tx = -wall.nz, tz = wall.nx;
+          if (tx * this.vel.x + tz * this.vel.z < 0) { tx = -tx; tz = -tz; }
+          const alongFrac = (tx * this.vel.x + tz * this.vel.z) / (spXZ0 + 1e-6);
+          // Цепляемся, только если бежим ВДОЛЬ стены и смотрим по ходу
+          if (alongFrac > 0.45 && (tx * _fwd.x + tz * _fwd.z) > 0.25) {
+            this.wallRunning = true;
+            this.wallRunT = 2.3;
+            this.wallN.set(wall.nx, 0, wall.nz);
+            this.airJumps = Math.max(this.airJumps, 1);
+            this.vel.y = Math.max(this.vel.y * 0.3, 0) + 1.5; // лёгкий подхват
+            if (sfx) sfx.crateSlide();
+          }
+        }
       }
     }
-    // На стене гравитация почти выключена — иначе бег не «держит» высоту
+
     if (this.wallRunning) {
-      this.vel.y -= 5.0 * dt;
-      if (this.vel.y < -1.5) this.vel.y = -1.5;
-    } else {
-      this.vel.y -= 24 * dt;
+      this.wallRunT -= dt;
+      const wall = this._probeWall(arena, this.radius + 0.6);
+      const sameWall = wall && (wall.nx * this.wallN.x + wall.nz * this.wallN.z) > 0.5;
+      if (!sameWall || this.onGround || this.wallRunT <= 0 || !isMoving) {
+        this.wallRunning = false;
+        this.wallStickCd = 0.25;
+      } else {
+        this.wallN.set(wall.nx, 0, wall.nz);
+        let tx = -wall.nz, tz = wall.nx;
+        if (tx * this.vel.x + tz * this.vel.z < 0) { tx = -tx; tz = -tz; }
+        const sp = Math.min(Math.max(Math.hypot(this.vel.x, this.vel.z), 7.8), 11.8);
+        // Скорость строго вдоль стены + лёгкое прижатие к ней
+        this.vel.x = tx * sp - wall.nx * 2.0;
+        this.vel.z = tz * sp - wall.nz * 2.0;
+        // На стене не «сыплемся»: ограничиваем скорость сползания вниз
+        if (this.wallRunT >= 0.6 && this.vel.y < -1.2) this.vel.y = -1.2;
+      }
     }
+
+    // --- Прыжки: с земли / ОТ СТЕНЫ / двойной в воздухе ---
+    if (input.jump) {
+      if (this.wallRunning) {
+        // Прыжок от стены: сохраняем ход вдоль стены + сильный импульс по
+        // нормали — хватает, чтобы перелететь на противоположную стену
+        let tx = -this.wallN.z, tz = this.wallN.x;
+        if (tx * this.vel.x + tz * this.vel.z < 0) { tx = -tx; tz = -tz; }
+        const spAlong = Math.abs(tx * this.vel.x + tz * this.vel.z);
+        this.vel.x = tx * spAlong * 0.75 + this.wallN.x * 8.4;
+        this.vel.z = tz * spAlong * 0.75 + this.wallN.z * 8.4;
+        this.vel.y = 7.8;
+        this.wallRunning = false;
+        this.wallStickCd = 0.28; // не прилипнуть мгновенно обратно к той же стене
+        this.airJumps = 1; // прыжок от стены возвращает двойной прыжок
+        if (sfx) sfx.swing();
+      } else if (this.onGround) {
+        this.vel.y = 8.6;
+        this.onGround = false;
+        this.airJumps = 1;
+      } else if (this.airJumps > 0) {
+        // Двойной прыжок + подруливание в сторону желаемого движения
+        this.airJumps--;
+        this.vel.y = 8.0;
+        if (_wish.lengthSq() > 0) {
+          this.vel.x += _wish.x * 2.4;
+          this.vel.z += _wish.z * 2.4;
+        }
+        if (sfx) sfx.swing();
+      }
+      input.jump = false;
+    }
+
+    // Гравитация: во время бега по стене — слабое «сползание»,
+    // в последние 0.6 с бег плавно «отпускает»
+    const grav = this.wallRunning ? (this.wallRunT < 0.6 ? 13 : 3.2) : 24;
+    this.vel.y -= grav * dt;
 
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
     this.pos.y += this.vel.y * dt;
 
-    const preClampX = this.pos.x, preClampZ = this.pos.z;
     arena.clampCircle(this.pos, this.radius, this.pos.y, this.height);
     if (props && props.clampCircle) {
       props.clampCircle(this.pos, this.radius, this.pos.y, this.height);
-    }
-
-    // --- Контакт со стеной для бега по стенам ---
-    // Вектор выталкивания из коллайдера = нормаль стены. Рейкаст подтверждает,
-    // что это настоящая стена уровня (а не невидимая граница карты).
-    this._wallContact = false;
-    if (this.parkourEnabled && !this.onGround) {
-      const pushX = this.pos.x - preClampX, pushZ = this.pos.z - preClampZ;
-      const pl = Math.hypot(pushX, pushZ);
-      if (pl > 1e-4) {
-        const nx = pushX / pl, nz = pushZ / pl;
-        _wrO.set(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z);
-        _wrD.set(-nx, 0, -nz);
-        const wallHit = arena.raycastWorld(_wrO, _wrD, this.radius + 0.45);
-        if (wallHit && Math.abs(wallHit.normal.y) < 0.5) {
-          this._wallContact = true;
-          this.wallN.x = nx;
-          this.wallN.z = nz;
-        }
-      }
-      // Проксимити-захват (как в Titanfall): стена в полуметре сбоку от
-      // направления полёта считается контактом — вжиматься в неё не нужно.
-      if (!this._wallContact) {
-        const spd = Math.hypot(this.vel.x, this.vel.z);
-        if (spd > 3) {
-          const ux = this.vel.x / spd, uz = this.vel.z / spd;
-          _wrO.set(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z);
-          for (const side of [1, -1]) {
-            _wrD.set(-uz * side, 0, ux * side); // перпендикуляр к движению
-            const sideHit = arena.raycastWorld(_wrO, _wrD, this.radius + 0.5);
-            if (sideHit && Math.abs(sideHit.normal.y) < 0.5) {
-              this._wallContact = true;
-              this.wallN.x = sideHit.normal.x;
-              this.wallN.z = sideHit.normal.z;
-              break;
-            }
-          }
-        }
-      }
     }
 
     const gArena = arena.groundTopAt(this.pos.x, this.pos.z, this.pos.y - this.vel.y * dt);
@@ -429,55 +457,21 @@ export class Player {
     if (this.pos.y <= g + 0.02 && this.vel.y <= 0) {
       if (!this.onGround && this.vel.y < -9) this.shake = Math.min(0.25, -this.vel.y * 0.012);
       this.pos.y = g; this.vel.y = 0; this.onGround = true;
+      this.airJumps = 1;          // приземление восстанавливает двойной прыжок
+      this.wallRunning = false;
     } else if (this.pos.y > g + 0.05) this.onGround = false;
     if (this.pos.y < -2) { this.pos.y = 0; this.vel.y = 0; }
-
-    // --- Бег по стенам (wall-run) ---
-    if (this.parkourEnabled) {
-      this.wallStickCd = Math.max(0, this.wallStickCd - dt);
-      const spXZ = Math.hypot(this.vel.x, this.vel.z);
-      if (this.onGround) {
-        this.wallRunning = false;
-        this.wallRunT = 0;
-        this.jumpsLeft = 1;
-      } else if (this._wallContact && this.wallStickCd <= 0 && iz > 0 && this.wallRunT < 2.4 && spXZ > 3.4) {
-        if (!this.wallRunning) {
-          this.wallRunning = true;
-          // Подхват в начале бега: гасим падение, чтобы «зацепиться» за стену
-          if (this.vel.y < 3.0) this.vel.y = 3.0;
-          this.jumpsLeft = 1; // касание стены восстанавливает воздушный прыжок
-        }
-        this.wallRunT += dt;
-        // Убираем составляющую скорости, направленную В стену — скользим вдоль
-        const into = -(this.vel.x * this.wallN.x + this.vel.z * this.wallN.z);
-        if (into > 0) {
-          this.vel.x += this.wallN.x * into;
-          this.vel.z += this.wallN.z * into;
-        }
-        // Лёгкое прилипание — не отклеиваемся на стыках панелей
-        this.vel.x -= this.wallN.x * 5.0 * dt;
-        this.vel.z -= this.wallN.z * 5.0 * dt;
-        // Поддержание крейсерской скорости бега по стене
-        const sp2 = Math.hypot(this.vel.x, this.vel.z);
-        if (sp2 > 0.1 && sp2 < 8.8) {
-          const k = Math.min(8.8, sp2 + 30 * dt) / sp2;
-          this.vel.x *= k;
-          this.vel.z *= k;
-        }
-      } else {
-        this.wallRunning = false;
-      }
-    }
 
     // --- Покачивание и динамический спринт ---
     const speedXZ = Math.hypot(this.vel.x, this.vel.z);
     const sprintFrac = clamp((speedXZ - baseSpeed) / (maxSpeed - baseSpeed + 0.01), 0, 1);
 
-    if (this.onGround && speedXZ > 0.5) {
-      const bobFreq = sprint ? 1.85 : 1.55;
+    const stepping = (this.onGround || this.wallRunning) && speedXZ > 0.5;
+    if (stepping) {
+      const bobFreq = this.wallRunning ? 1.7 : (sprint ? 1.85 : 1.55);
       this.bobPhase += dt * speedXZ * bobFreq;
     }
-    this.bobAmt += ((this.onGround && speedXZ > 0.5 ? 1 : 0) - this.bobAmt) * Math.min(1, dt * 8);
+    this.bobAmt += ((stepping ? 1 : 0) - this.bobAmt) * Math.min(1, dt * 8);
     const bobY = this.bobEnabled ? Math.sin(this.bobPhase * 2) * (0.028 + sprintFrac * 0.012) * this.bobAmt : 0;
     const bobX = this.bobEnabled ? Math.cos(this.bobPhase) * (0.017 + sprintFrac * 0.008) * this.bobAmt : 0;
 
@@ -493,13 +487,13 @@ export class Player {
     this.recoilVel += (-this.recoilPitch * 130 - this.recoilVel * 13) * dt;
     this.recoilPitch += this.recoilVel * dt;
     this.camera.rotation.order = 'YXZ';
-    // Крен от стены: на wall-run камера наклоняется ОТ стены (как в Titanfall)
-    const leanTarget = this.wallRunning
-      ? (this.wallN.x * _right.x + this.wallN.z * _right.z) * -0.21
+    const strafeBank = -ix * (sprint ? 0.026 : 0.018);
+    // Крен камеры ОТ стены во время бега по ней (как в Titanfall)
+    const rollTarget = this.wallRunning
+      ? -(_right.x * this.wallN.x + _right.z * this.wallN.z) * 0.23
       : 0;
-    this.wallLean += (leanTarget - this.wallLean) * Math.min(1, dt * 9);
-    const strafeBank = -ix * (sprint ? 0.026 : 0.018) + this.wallLean;
-    this.camera.rotation.set(this.pitch + this.recoilPitch, this.yaw, strafeBank);
+    this.wallRoll += (rollTarget - this.wallRoll) * Math.min(1, dt * 9);
+    this.camera.rotation.set(this.pitch + this.recoilPitch, this.yaw, strafeBank + this.wallRoll);
     this.camera.position.set(this.pos.x + bobX + shX, this.pos.y + this.eyeH + bobY + shY, this.pos.z);
 
     // --- Анимация смены оружия ---

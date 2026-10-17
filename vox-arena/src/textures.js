@@ -405,6 +405,66 @@ export function makeTextures() {
     noise(g, s, 300, 0.2, true);
   });
 
+  // 5a-2. Светлый бетон для открытых полигонов (паркур-трасса «Каньон-9»).
+  // Корабельные текстуры почти чёрные (альбедо ~0.02) — под открытым небом
+  // они проваливаются в черноту, поэтому трассе нужен свой материал.
+  T.concrete = makeTex(256, (g, s) => {
+    g.fillStyle = '#84858a'; g.fillRect(0, 0, s, s);
+    // крупные заливочные панели с лёгкой разнотонностью
+    const panelW = 128, panelH = 85;
+    for (let y = 0; y < 3; y++) for (let x = 0; x < 2; x++) {
+      const v = 125 + Math.random() * 22;
+      g.fillStyle = `rgb(${v},${v},${v + 3})`;
+      g.fillRect(x * panelW + 2, y * panelH + 2, panelW - 4, panelH - 4);
+    }
+    // швы опалубки
+    g.fillStyle = 'rgba(0,0,0,.35)';
+    for (let y = 0; y <= 3; y++) g.fillRect(0, y * panelH - 1, s, 2);
+    g.fillRect(panelW - 1, 0, 2, s);
+    // отверстия стяжек
+    g.fillStyle = '#5c5d61';
+    for (let y = 0; y < 3; y++) for (let x = 0; x < 2; x++) {
+      g.beginPath(); g.arc(x * panelW + 18, y * panelH + 16, 4, 0, 7); g.fill();
+      g.beginPath(); g.arc(x * panelW + panelW - 18, y * panelH + 16, 4, 0, 7); g.fill();
+    }
+    // потёки и грязь
+    for (let i = 0; i < 7; i++) {
+      g.fillStyle = `rgba(40,42,46,${0.08 + Math.random() * 0.1})`;
+      const rx = Math.random() * s;
+      g.fillRect(rx, Math.random() * 60, 4 + Math.random() * 9, 50 + Math.random() * 140);
+    }
+    noise(g, s, 900, 0.1); noise(g, s, 300, 0.05, true);
+  }, { repeat: [4, 2] });
+
+  // Бетонные плиты пола той же гаммы, с крупной сеткой швов
+  T.concreteFloor = makeTex(256, (g, s) => {
+    g.fillStyle = '#7d7e83'; g.fillRect(0, 0, s, s);
+    const tile = 128;
+    for (let y = 0; y < 2; y++) for (let x = 0; x < 2; x++) {
+      const v = 118 + Math.random() * 20;
+      g.fillStyle = `rgb(${v},${v},${v + 2})`;
+      g.fillRect(x * tile + 2, y * tile + 2, tile - 4, tile - 4);
+      g.fillStyle = 'rgba(0,0,0,.4)';
+      g.fillRect(x * tile, y * tile + tile - 2, tile, 2);
+      g.fillRect(x * tile + tile - 2, y * tile, 2, tile);
+    }
+    // трещины
+    g.strokeStyle = 'rgba(30,31,35,.5)'; g.lineWidth = 1.5;
+    for (let i = 0; i < 4; i++) {
+      g.beginPath();
+      let cx = Math.random() * s, cy = Math.random() * s;
+      g.moveTo(cx, cy);
+      for (let k = 0; k < 5; k++) { cx += (Math.random() - 0.5) * 60; cy += Math.random() * 30; g.lineTo(cx, cy); }
+      g.stroke();
+    }
+    // масляные пятна
+    for (let i = 0; i < 4; i++) {
+      g.fillStyle = `rgba(35,36,40,${0.1 + Math.random() * 0.12})`;
+      g.beginPath(); g.arc(Math.random() * s, Math.random() * s, 10 + Math.random() * 26, 0, 7); g.fill();
+    }
+    noise(g, s, 900, 0.12); noise(g, s, 280, 0.05, true);
+  }, { repeat: [12, 12] });
+
   // 5b. Панорамное бронестекло мостика (Armored Viewport Glass)
   // Чистое, без морозных узоров и стазис-надписей — только лёгкие блики,
   // диагональные отражения и царапины на внешнем слое.

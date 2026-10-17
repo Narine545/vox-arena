@@ -54,12 +54,7 @@ const enemies = new EnemyManager(scene, T, fx, sfx, {
 });
 
 const player = new Player(camera);
-// В кампании игрок теперь просыпается БЕЗ ОРУЖИЯ (curSlot = -1), поэтому для
-// боевых тестов явно включаем режим песочницы: полный арсенал, слот 0.
-// Точка (0,0,0) на карте «арена» — внутри коллайдера центрального подиума,
-// физика вытолкнет игрока вбок. Ставим на свободный пол (0, 0, 10), взгляд -Z.
-player.reset(0, 0, 10, 0, 'sandbox');
-console.log('✓ Игрок и системы инициализированы (режим песочницы: арсенал разблокирован)');
+console.log('✓ Игрок и системы инициализированы');
 
 // Тест 1: Проверка 3D-моделей оружия и ноги
 console.log('\n--- ТЕСТ 1: 3D Вьюмодели (Автомат, Двустволка, Нога) ---');
@@ -73,7 +68,17 @@ console.log('✓ Все 3D-вьюмодели успешно сгенериро�
 
 // Тест 2: Проверка переключения оружия и стрельбы из дробовика
 console.log('\n--- ТЕСТ 2: Оружие (Автомат и Двуствольный обрез «ПАЛАЧ») ---');
-if (player.curSlot !== 0) throw new Error('Default slot must be 0 (Rifle)');
+
+// В кампании игрок просыпается БЕЗОРУЖНЫМ (slot -1), оружие подбирается
+// по сюжету; в песочнице — вооружён с самого начала.
+player.reset(0, 0, 0, 0, 'campaign');
+if (player.curSlot !== -1) throw new Error('Campaign must start UNARMED (slot -1)');
+if (player.unlockedWeapons[0] || player.unlockedWeapons[1]) throw new Error('Campaign must start with weapons locked');
+if (player.rifleAssets.group.visible) throw new Error('Unarmed player must not show rifle viewmodel');
+console.log('✓ Кампания: игрок просыпается безоружным, вьюмодель скрыта');
+
+player.reset(0, 0, 0, 0, 'sandbox');
+if (player.curSlot !== 0) throw new Error('Sandbox default slot must be 0 (Rifle)');
 console.log('Текущее оружие:', player.curWeapon.name, '| Патронов:', player.mag);
 
 // Переключаем на обрез
@@ -91,8 +96,15 @@ console.log('Угол перелома стволов дробовика при 
 if (barrelRotX >= 0) throw new Error('Shotgun barrel must tilt DOWNWARD (negative X rotation)');
 console.log('✓ Стволы дробовика отклоняются строго вниз, казённик открывается навстречу игроку');
 
-// Спавним тестового монстра перед игроком
-const monster1 = enemies.spawn('minion', 0, 7.5, 1); // 2.5м прямо по курсу (камера смотрит в -Z)
+// Спавним тестового монстра перед игроком.
+// ВАЖНО: (0,0) — центр карты «арена» с коллайдерами постамента, игрока
+// оттуда выталкивает. Бой разыгрываем на свободной зоне спавна (0, 16).
+// yaw 0 смотрит в −Z (forward = (−sin, −cos)) → разворачиваемся на yaw = PI (+Z).
+player.pos.set(0, 0, 16);
+player.yaw = Math.PI;
+player.update(0.016, { keys: new Set() }, arena, { enemies, fx, sfx, hud: mockHud });
+const monster1 = enemies.spawn('minion', 0, 22, 1);
+const hpBefore = monster1.hp;
 console.log('Заспавнен скороход перед игроком, HP:', monster1.hp);
 
 // Стреляем из обреза
@@ -101,18 +113,14 @@ player.mag = 2;
 player._fireShotgun(arena, enemies, fx, sfx, mockHud);
 console.log('Выстрел из обреза произведен! HP монстра после залпа картечи:', monster1.hp);
 console.log('Патронов в обрезе после выстрела:', player.mag);
+if (monster1.hp >= hpBefore) throw new Error('Shotgun blast must damage the target');
+console.log('✓ Картечь нанесла урон цели');
 
 // Тест 3: Боевой армейский пинок (Melee Kick)
 console.log('\n--- ТЕСТ 3: Боевой пинок ногой ---');
-const warrior = enemies.spawn('warrior', 0, 6.5, 1);
+// Громила в радиусе пинка (2.4 м) прямо по курсу (+Z)
+const warrior = enemies.spawn('warrior', 0, 17.8, 1);
 console.log('Заспавнен громила (Клещ), HP:', warrior.hp, 'Poise:', warrior.poise);
-// Спавн-анимация длится ~0.9с — нокдаун невозможен из состояния 'spawn',
-// поэтому даем монстру подняться и перейти в боевое состояние.
-for (let s = 0; s < 30; s++) enemies.update(0.05, player, arena);
-// Дальность пинка — 2.4м, а камера без вращения смотрит в -Z:
-// ставим громилу вплотную прямо по курсу удара.
-warrior.pos.set(0, 0, 8.4);
-console.log('Состояние громилы перед пинком:', warrior.state, '| позиция:', warrior.pos.z);
 
 player.startKick(sfx);
 if (!player.isKicking || !player.kickLeg.visible) throw new Error('Kick should be active');
@@ -127,17 +135,12 @@ console.log('✓ Монстр сбит с ног в физический рэг�
 
 // Тест 4: Отстрел конечности и пинок по оторванной голове
 console.log('\n--- ТЕСТ 4: Пинок по оторванной голове/конечности ---');
-const rogue = enemies.spawn('rogue', 0, 8.6, 1); // в зоне досягаемости пинка
-// Запас HP, чтобы тварь не умерла от самой ампутации (смерть конвертирует
-// труп в рэгдолл и меняет состав severedProps под ногами).
-rogue.hp = rogue.maxHp = 500;
+const rogue = enemies.spawn('rogue', 0, 14.8, 1);
 enemies.severLimb(rogue, 'lArm', new THREE.Vector3(0, 1, 0), rogue.pos.clone());
 console.log('Конечность оторвана, количество оторванных предметов в мире:', enemies.severedProps.length);
 if (enemies.severedProps.length === 0) throw new Error('Severed prop should spawn');
 
-// В severedProps может уже лежать конечность, оторванная дробовиком в тесте 2 —
-// берём ПОСЛЕДНЮЮ (только что отстреленную руку резака рядом с игроком).
-const prop = enemies.severedProps[enemies.severedProps.length - 1];
+const prop = enemies.severedProps[0];
 console.log('Позиция отстреленной конечности:', prop.pos.x.toFixed(2), prop.pos.y.toFixed(2), prop.pos.z.toFixed(2));
 
 // Пинаем лежащую конечность
@@ -153,7 +156,7 @@ console.log('✓ Конечность запущена пинком как сн�
 
 // Тест 5: Агония обезглавленного (Headless Rampage)
 console.log('\n--- ТЕСТ 5: Агония обезглавленного (Headless Rampage) ---');
-const runner = enemies.spawn('minion', 0, 4, 1);
+const runner = enemies.spawn('minion', 0, 10, 1);
 runner.state = 'headless_rampage';
 runner.rampageT = 1.5;
 runner.forwardX = 0;
@@ -164,7 +167,7 @@ for (let s = 0; s < 15; s++) {
   enemies.update(0.05, player, arena);
 }
 console.log('Монстр в агонии прошагал вперед, Z =', runner.pos.z.toFixed(2), 'State:', runner.state);
-if (runner.pos.z <= 4) throw new Error('Headless monster should stumble forward');
+if (runner.pos.z <= 10) throw new Error('Headless monster should stumble forward');
 console.log('✓ Обезглавленный монстр бежит вперед в агонии, фонтанируя кровью');
 
 // Тест 6: Тактический фонарик (Hotspot + Spill)

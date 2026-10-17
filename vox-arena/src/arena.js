@@ -16,19 +16,16 @@ export const MAPS = {
     desc: 'Ветвящиеся узкие коридоры, перекрёстки, лаборатории и фланговые тоннели',
     playerSpawn: { x: 0, y: 0, z: 0, yaw: 0 },
   },
-  course: {
-    id: 'course',
-    name: 'ПОЛИГОН: ВЕРТИКАЛЬ',
-    desc: 'Тренировочная трасса бега по стенам: разгон, wall-run, прыжки между параллельными стенами и двойные прыжки до финиша',
-    playerSpawn: { x: 0, y: 3.0, z: -32, yaw: Math.PI }, // старт на платформе, взгляд вдоль трассы (+Z)
-    parkour: true,  // включает бег по стенам и двойной прыжок у игрока
-    bounds: 44,     // границы карты шире стандартных ±33
+  parkour: {
+    id: 'parkour',
+    name: 'ТРАССА: КАНЬОН-9',
+    desc: 'Паркур-полигон: бег по стенам, прыжки между встречными стенами и двойной прыжок. Следуйте жёлтой разметке от СТАРТА до маяка ФИНИША.',
+    playerSpawn: { x: 8, y: 2.1, z: 24, yaw: Math.PI / 2 },
   },
 };
 
 // Построение карт арены или катакомб
 export function buildArena(scene, T, mapId = 'arena', propsMgr = null) {
-  const BOUND = (MAPS[mapId] && MAPS[mapId].bounds) || 33; // границы мира ±BOUND
   const colliders = []; // {min,max}
   const lights = [];
   const meshes = [];
@@ -312,103 +309,129 @@ export function buildArena(scene, T, mapId = 'arena', propsMgr = null) {
   }
 
   // ==========================================================================
-  // 3. КАРТА: ПОЛИГОН «ВЕРТИКАЛЬ» — трасса для бега по стенам
-  // Индустриальный тренировочный ангар: бетон, металл, разметка. Без неона.
-  // Маршрут: старт -> wall-run по левой стене -> платформа -> перепрыжка
-  // правая/левая стена -> платформа -> двойной прыжок -> финиш.
+  // 3. КАРТА: ТРАССА «КАНЬОН-9» — ПАРКУР-ПОЛИГОН (БЕГ ПО СТЕНАМ)
+  // Сдержанная индустриальная палитра: бетон, сталь, тёплые прожекторы,
+  // жёлто-чёрная разметка маршрута. Никакого неона.
+  // Маршрут: СТАРТ → вип-ран по длинной стене → П1 → зигзаг между
+  // встречными стенами → П2 → двойной прыжок через разрыв → маяк ФИНИША.
   // ==========================================================================
-  const courseState = (mapId === 'course')
-    ? { armed: true, running: false, finished: false, t: 0, best: null, isRecord: false, justStarted: false, justFinished: false }
-    : null;
+  else if (mapId === 'parkour') {
+    // Холодный сумеречный свет + тёплые прожекторы на трассе
+    // Физическая шкала освещения (ламберт делит на PI): заливке нужны
+    // крупные значения, иначе бетон уходит в черноту.
+    const hemi = new THREE.HemisphereLight(0x93a0b5, 0x262a33, 1.7); scene.add(hemi); lights.push(hemi);
+    const amb = new THREE.AmbientLight(0x49505e, 1.2); scene.add(amb); lights.push(amb);
+    const dir = new THREE.DirectionalLight(0xcdd6e6, 2.0); dir.position.set(-28, 46, 18); scene.add(dir); lights.push(dir);
 
-  if (mapId === 'course') {
-    // --- Свет: холодный ангар с тёплыми пятнами ламп над платформами ---
-    const hemi = new THREE.HemisphereLight(0x8b96a6, 0x23262c, 1.35); scene.add(hemi); lights.push(hemi);
-    const amb = new THREE.AmbientLight(0x454c56, 1.25); scene.add(amb); lights.push(amb);
-    const dir = new THREE.DirectionalLight(0xdfe6f2, 1.1); dir.position.set(-22, 40, -12); scene.add(dir); lights.push(dir);
-    const dir2 = new THREE.DirectionalLight(0x9fb0c8, 0.55); dir2.position.set(18, 26, 30); scene.add(dir2); lights.push(dir2);
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(320, 20, 12), new THREE.MeshBasicMaterial({ map: T.sky, color: 0x8899aa, side: THREE.BackSide, fog: false, depthWrite: false }));
+    sky.renderOrder = -1; scene.add(sky); meshes.push(sky);
 
-    const concrete = lam(T.wall, 0x9aa1ab);
-    const darkConcrete = lam(T.wall, 0x707680);
-    const runWall = lam(T.wall, 0xc6ced8);   // беговые стены заметно светлее
-    const deckMat = lam(T.platform, 0x99a1ad);
-    const pitMat = lam(T.floor, 0x70767f);
-    const hazardM = lam(T.hazard);
-    const bulbMat = new THREE.MeshBasicMaterial({ color: 0xe8d9bd });
+    const floorMat = lam(T.concreteFloor);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(92, 92), floorMat);
+    floor.rotation.x = -Math.PI / 2; scene.add(floor); meshes.push(floor);
 
-    const addLamp = (x, y, z, color = 0xffd9a8, intensity = 36, dist = 24) => {
-      const l = new THREE.PointLight(color, intensity, dist, 1.4);
-      l.position.set(x, y, z); scene.add(l); lights.push(l);
-      addBox(x - 0.25, y + 0.15, z - 0.25, 0.5, 0.16, 0.5, bulbMat, { collide: false });
+    const concrete = lam(T.concrete);
+    const steel = lam(T.concrete, 0xb4bcc8);   // платформы — светлый бетон с холодным оттенком
+    const steelDark = lam(T.platform, 0x7a8089); // тёмная сталь: ступени, мачты
+    const hzrd = lam(T.hazard);
+
+    // Периметр каньона
+    addBox(0, 0, -45, 90, 10, 1.2, concrete, { texRepeat: [12, 2] });
+    addBox(0, 0, 45, 90, 10, 1.2, concrete, { texRepeat: [12, 2] });
+    addBox(-45, 0, 0, 1.2, 10, 90, concrete, { texRepeat: [12, 2] });
+    addBox(45, 0, 0, 1.2, 10, 90, concrete, { texRepeat: [12, 2] });
+
+    // Жёлтая полоса-разметка на стене: «беги здесь» (не коллайдер)
+    const runStripe = (cx, y, cz, sx, sz) =>
+      addBox(cx, y, cz, sx, 0.34, sz, hzrd, { collide: false });
+
+    // Тёплый прожектор на мачте
+    const floodlight = (x, z, intensity = 72) => {
+      addBox(x, 0, z, 0.4, 6.4, 0.4, steelDark);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.7), new THREE.MeshBasicMaterial({ color: 0xffd9a0 }));
+      head.position.set(x, 6.6, z); scene.add(head); meshes.push(head);
+      const pl = new THREE.PointLight(0xffd9a0, intensity, 30, 1.5);
+      pl.position.set(x, 6.2, z); scene.add(pl); lights.push(pl);
     };
 
-    // --- Ангар: котлован, стены, торцы ---
-    addBox(0, -0.5, 0, 20.8, 0.5, 76.8, pitMat);              // дно котлована (y=0)
-    addBox(-10.4, 0, 0, 0.8, 11, 76.8, darkConcrete);          // западная стена
-    addBox(10.4, 0, 0, 0.8, 11, 76.8, darkConcrete);           // восточная стена
-    addBox(0, 0, -38.4, 21.6, 11, 0.8, darkConcrete);          // южный торец
-    addBox(0, 0, 38.4, 21.6, 11, 0.8, darkConcrete);           // северный торец
+    // --- СТАРТ: платформа со ступенями ---
+    addBox(8, 0, 24, 6, 2.1, 6, steel, { texRepeat: [2, 1] });
+    addBox(8, 0, 28.2, 6, 0.7, 2.4, steelDark);
+    addBox(8, 0, 26.9, 6, 1.4, 1.4, steelDark);
+    runStripe(8, 2.12, 24, 5.6, 0.5);
+    floodlight(13, 27);
 
-    // --- Старт: платформа + обратная лестница из котлована ---
-    addBox(0, 0, -32, 8, 3, 8, deckMat);                       // старт, верх y=3
-    for (let i = 0; i < 5; i++) {
-      addBox(-5.8, 0, -23.2 - i * 1.6, 3.6, 0.6 * (i + 1), 1.6, concrete);
+    // --- Сегмент 1: вип-ран по длинной бетонной стене (20 м) ---
+    // Бежать по ЮЖНОЙ грани (z ≈ 21.5), со СТАРТА на запад к П1
+    addBox(-8, 0, 21, 20, 6.5, 1, concrete, { texRepeat: [8, 2] });
+    runStripe(-8, 2.6, 21.55, 19.6, 0.08);
+
+    // --- П1: промежуточная платформа ---
+    addBox(-24, 0, 24, 6, 2.1, 6, steel, { texRepeat: [2, 1] });
+    runStripe(-24, 2.12, 24, 5.6, 0.5);
+    floodlight(-28.5, 27.5);
+
+    // --- Сегмент 2: зигзаг — прыжки между ВСТРЕЧНЫМИ стенами ---
+    // Левая стена (внутренняя грань x ≈ -28), затем правая (x ≈ -20):
+    // бежишь по одной, прыжком перелетаешь на противоположную. Стены
+    // длинные и смещены по z: при перелёте игрок сильно дрейфует вдоль хода.
+    addBox(-28.5, 0, 10, 1, 7, 16, concrete, { texRepeat: [7, 2] });
+    runStripe(-27.94, 2.6, 10, 0.08, 15.6);
+    addBox(-19.5, 0, -2, 1, 7, 16, concrete, { texRepeat: [7, 2] });
+    runStripe(-20.06, 2.6, -2, 0.08, 15.6);
+
+    // --- П2: платформа перед финальным разрывом ---
+    addBox(-24, 0, -14, 6, 2.8, 6, steel, { texRepeat: [2, 1] });
+    runStripe(-24, 2.82, -14, 5.6, 0.5);
+    floodlight(-19.5, -14);
+
+    // --- ФИНИШ: башня через 7-метровый разрыв (нужен двойной прыжок) ---
+    addBox(-24, 0, -27, 7, 3.5, 7, steel, { texRepeat: [2, 1] });
+    runStripe(-24, 3.52, -27, 6.6, 0.6);
+    // Маяк финиша: столб с тёплым сигнальным огнём
+    addBox(-24, 3.5, -29.9, 0.5, 2.8, 0.5, steelDark);
+    const beacon = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), new THREE.MeshBasicMaterial({ color: 0xffb347 }));
+    beacon.position.set(-24, 6.7, -29.9); scene.add(beacon); meshes.push(beacon);
+    const beaconLight = new THREE.PointLight(0xffb347, 80, 30, 1.5);
+    beaconLight.position.set(-24, 6.4, -29.9); scene.add(beaconLight); lights.push(beaconLight);
+
+    // Тренировочная «яма» для отработки прыжков между стенами у старта:
+    // стены длинные (20 м) — хватает запаса на дрейф вдоль при перелётах
+    addBox(24, 0, -8, 1, 6.5, 20, concrete, { texRepeat: [8, 2] });
+    runStripe(23.44, 2.6, -8, 0.08, 19.6);
+    addBox(32, 0, -8, 1, 6.5, 20, concrete, { texRepeat: [8, 2] });
+    runStripe(32.56, 2.6, -8, 0.08, 19.6);
+    floodlight(28, 4);
+
+    // Точки спавна тварей — на открытой земле, подальше от трассы
+    spawnPoints.push(V3(10, 0, -20));
+    spawnPoints.push(V3(-5, 0, 5));
+    spawnPoints.push(V3(20, 0, 20));
+
+    // Аптечки на ключевых платформах
+    const parkourSpots = [
+      [-24, 2.1, 24],
+      [-24, 3.5, -27],
+      [28, 0, -6],
+    ];
+    const crossMat = new THREE.MeshBasicMaterial({ color: 0xff3344 });
+    const crossGlow = new THREE.SpriteMaterial({ map: T.glow, color: 0xff3344, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending });
+    for (const [x, baseY, z] of parkourSpots) {
+      const g = new THREE.Group(); g.position.set(x, baseY, z);
+      const a = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.13, 0.13), crossMat);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.42, 0.13), crossMat);
+      const glow = new THREE.Sprite(crossGlow); glow.scale.setScalar(1.3);
+      g.add(a, b, glow); scene.add(g); meshes.push(g);
+      pickups.push({ g, x, y: baseY, z, active: true, timer: 0 });
     }
-
-    // --- Секция 1: wall-run по ЛЕВОЙ стене через котлован ---
-    addBox(-2.9, 2.0, -21, 0.8, 5.5, 12, runWall);             // стена А (парит над ямой)
-    addBox(0.6, 0, -12.4, 5.6, 3.2, 4.8, deckMat);             // платформа P1, верх 3.2
-
-    // --- Секция 2: перепрыжка между ПРАВОЙ и ЛЕВОЙ стенами ---
-    addBox(2.9, 2.2, -3.5, 0.8, 5.3, 12, runWall);             // стена B (справа)
-    addBox(-2.9, 2.2, 5.5, 0.8, 5.3, 12, runWall);             // стена C (слева)
-    addBox(0, 0.4, 14.6, 5.6, 3.2, 4.8, deckMat);              // платформа P2, верх 3.6
-
-    // --- Секция 3: двойной прыжок через широкий разрыв ---
-    addBox(0, 0.6, 25.6, 5.6, 3.2, 4.8, deckMat);              // платформа P3, верх 3.8
-
-    // --- Финиш ---
-    addBox(0, 0.8, 33.4, 8.4, 3.6, 6, deckMat);                // финиш, верх 4.4
-    addBox(-3.4, 4.4, 33.4, 0.7, 3.4, 0.7, concrete, { collide: false });
-    addBox(3.4, 4.4, 33.4, 0.7, 3.4, 0.7, concrete, { collide: false });
-    addBox(0, 7.8, 33.4, 7.5, 0.5, 0.7, hazardM, { collide: false });
-
-    // --- Разметка: аварийные полосы на кромках платформ ---
-    const edge = (x, topY, z, w) => addBox(x, topY, z, w, 0.07, 0.34, hazardM, { collide: false });
-    edge(0, 3.0, -28.2, 8);         // срез старта
-    edge(0.6, 3.2, -14.6, 5.6);     // вход P1
-    edge(0.6, 3.2, -10.2, 5.6);     // выход P1
-    edge(0, 3.6, 12.4, 5.6);        // вход P2
-    edge(0, 3.6, 16.8, 5.6);        // выход P2
-    edge(0, 3.8, 23.4, 5.6);        // вход P3
-    edge(0, 3.8, 27.8, 5.6);        // выход P3
-    edge(0, 4.4, 30.6, 8.4);        // кромка финиша
-
-    // --- Светлые направляющие панели на беговых стенах (не коллизия) ---
-    addBox(-2.9, 3.5, -21, 0.86, 0.5, 12, lam(T.hazard, 0xb8b09a), { collide: false });
-    addBox(2.9, 3.7, -3.5, 0.86, 0.5, 12, lam(T.hazard, 0xb8b09a), { collide: false });
-    addBox(-2.9, 3.7, 5.5, 0.86, 0.5, 12, lam(T.hazard, 0xb8b09a), { collide: false });
-
-    // --- Лампы над платформами ---
-    addLamp(0, 7.0, -32);
-    addLamp(0.6, 7.0, -12.4);
-    addLamp(0, 7.2, 14.6);
-    addLamp(0, 7.4, 25.6);
-    addLamp(0, 7.8, 33.4, 0xbfd8ef, 44, 26); // финиш — холодный
-    addLamp(-7, 5.5, -21, 0xffc890, 16, 16); // подсветка котлована
-    addLamp(7, 5.5, 1, 0xffc890, 16, 16);
-    addLamp(-6.8, 6.4, -18.5, 0xffe2b8, 24, 20); // вдоль стены А
-    addLamp(6.8, 6.4, -3.5, 0xffe2b8, 24, 20);   // вдоль стены Б
-    addLamp(-6.8, 6.4, 6.5, 0xffe2b8, 24, 20);   // вдоль стены В
-    addLamp(0, 7.0, 4.0, 0xffd9a8, 28, 22);      // середина котлована
-
-    spawnPoints.push({ x: 0, z: -18 }, { x: 0, z: 8 });
   }
 
   // ==========================================================================
   // Физика: проверка пола со ступеньками + выталкивание из стен
   // ==========================================================================
   const STEP = 0.7;
+  // Жёсткая граница мира зависит от карты (трасса «Каньон-9» крупнее арены)
+  const BOUND = (mapId === 'parkour') ? 44.4 : 33;
   function groundTopAt(x, z, footY) {
     let best = 0;
     for (const c of colliders) {
@@ -472,24 +495,6 @@ export function buildArena(scene, T, mapId = 'arena', propsMgr = null) {
   }
 
   function updatePickups(dt, time, playerPos, onPickup) {
-    // --- Таймер трассы «Вертикаль» ---
-    if (courseState && playerPos) {
-      const cs = courseState;
-      if (cs.running) cs.t += dt;
-      const onStartPad = playerPos.z < -27.6 && playerPos.y > 2.4;
-      if (onStartPad && !cs.armed) {
-        cs.armed = true; cs.running = false; cs.finished = false; cs.t = 0;
-      }
-      if (cs.armed && playerPos.z >= -27.6) {
-        cs.armed = false; cs.running = true; cs.t = 0; cs.justStarted = true;
-      }
-      if (cs.running && playerPos.z > 30.2 && playerPos.y > 3.6) {
-        cs.running = false; cs.finished = true; cs.justFinished = true;
-        cs.isRecord = !cs.best || cs.t < cs.best;
-        if (cs.isRecord) cs.best = cs.t;
-      }
-    }
-
     portalMat.opacity = 0.38 + Math.sin(time * 2.6) * 0.14;
     for (const p of pickups) {
       if (!p.active) {
@@ -519,10 +524,14 @@ export function buildArena(scene, T, mapId = 'arena', propsMgr = null) {
 
   const curMapDef = MAPS[mapId] || MAPS.arena;
 
+  // Открытая трасса «Каньон-9» задыхается в плотном корабельном тумане —
+  // отдаём main.js свои параметры тумана (null = значения по умолчанию).
+  const fogCfg = (mapId === 'parkour') ? { color: 0x0b0e15, near: 16, far: 150 } : null;
+
   return {
     mapId,
     mapDef: curMapDef,
-    courseState,
+    fogCfg,
     colliders,
     spawnPoints,
     groundTopAt,
@@ -531,6 +540,8 @@ export function buildArena(scene, T, mapId = 'arena', propsMgr = null) {
     updatePickups,
     resetPickups,
     clearMap,
-    clear: clearMap, // setMap() в main.js зовёт arena.clear() — как у StarshipLevel
+    // setMap()/clearSandbox() в main.js зовут arena.clear() — у StarshipLevel
+    // метод так и называется. Без этого алиаса смена карты песочницы крашила игру.
+    clear: clearMap,
   };
 }
